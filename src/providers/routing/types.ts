@@ -12,6 +12,9 @@ export interface RouteRequest {
 export interface RouteResult {
   distanceKm: number;
   durationMinutes: number;
+  hasToll: boolean;
+  hasHighway: boolean;
+  walkingDistanceMeters?: number;
   geometry: any; // GeoJSON LineString
   legs: any[];
   maneuvers: any[];

@@ -68,10 +68,17 @@ Provider implementations
 - **Output Schema:** `{ "distanceKm": number, "durationMinutes": number, "geometry": { "type": "LineString", "coordinates": [...] }, "legs": [...], "maneuvers": [...] }`
 
 ### `compare_routes`
-- **Purpose:** Request multiple route alternatives (e.g., fastest vs. toll-free) for comparison.
-- **Backend:** Valhalla (Alternatives API).
-- **Input Schema:** Similar to `calculate_route` but asks for multiple costing profiles.
-- **Output Schema:** Array of routes.
+- **Purpose:** Request multiple route alternatives, evaluate them against constraints, and output a ranked recommendation.
+- **Backend:** ConstraintEngine (using Valhalla candidates).
+- **Input Schema:** `{ "locations": [...], "mode": "auto", "constraints": [{ "type": "avoid_tolls", "severity": "hard" }] }`
+- **Output Schema:** `{ "feasible": boolean, "recommended": RouteEvaluation, "alternatives": RouteEvaluation[], "reason": "string" }`
+
+## 6. ConstraintEngine & Route Evaluation
+To shield the LLM from arithmetic and arbitrary path evaluation, a deterministic `ConstraintEngine` performs route evaluations.
+- **Hard Constraints:** Eliminate a route if violated (e.g. `severity: "hard"` for `avoid_tolls`).
+- **Soft Preferences:** Penalize a route's ranking score without eliminating it.
+- **Deterministic Scoring:** Lower score is better. `score = (duration * 1.0) + (distance * 0.5) + (soft_penalties)`.
+- **TimeUtils:** Deterministically calculates ETAs, required departure times, and buffers using ISO-8601 mathematics to avoid string-manipulation errors inside LLM prompts.
 
 ## 6. Nominatim Integration
 Used strictly for geocoding. Wrapped in a `GeocodeProvider` interface. Rate limiting and user-agent requirements of the public API must be respected, or a dedicated instance/alternative (like Photon) must be used if traffic increases.

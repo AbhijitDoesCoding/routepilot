@@ -1,0 +1,108 @@
+import { z } from "zod";
+import { ValhallaProvider } from "../../providers/routing/valhalla.js";
+import { ConstraintEngine, RouteConstraint, RouteCandidate } from "../../domain/constraints.js";
+
+const provider = new ValhallaProvider();
+const engine = new ConstraintEngine();
+
+export const compareRoutesDefinition = {
+  name: "compare_routes",
+  description: "Generate and evaluate multiple alternative routes against hard and soft constraints.",
+  parameters: z.object({
+    locations: z.array(
+      z.object({
+        lat: z.number().min(-90).max(90),
+        lon: z.number().min(-180).max(180),
+        name: z.string().optional()
+      })
+    ).min(2).describe("Waypoints to route between"),
+    mode: z.enum(["auto", "pedestrian", "bicycle"]).default("auto").describe("Transport mode"),
+    constraints: z.array(
+      z.object({
+        type: z.enum(["avoid_tolls", "avoid_highways", "max_walking_distance", "arrival_deadline"]),
+        severity: z.enum(["hard", "soft"]),
+        value: z.any().optional()
+      })
+    ).optional().default([]).describe("Hard or soft constraints to evaluate candidates against")
+  })
+};
+
+export const compareRoutesHandler = async (args: any) => {
+  try {
+    const { locations, mode, constraints } = args;
+    const typedConstraints = constraints as RouteConstraint[];
+
+    // Generate candidates by varying profiles if applicable
+    const candidatePromises = [];
+
+    // Profile 1: Default (Fastest)
+    candidatePromises.push(
+      provider.calculateRoute({ locations, mode, avoidTolls: false, avoidHighways: false })
+        .then(res => ({ ...res, candidateId: "fastest", costingProfile: "default" }))
+        .catch(err => { console.error("Fastest failed:", err); return null; })
+    );
+
+    // Profile 2: Toll-averse (if mode is auto)
+    if (mode === "auto") {
+      candidatePromises.push(
+        provider.calculateRoute({ locations, mode, avoidTolls: true, avoidHighways: false })
+          .then(res => ({ ...res, candidateId: "no-tolls", costingProfile: "avoid_tolls" }))
+          .catch(() => null) // ignore if failing
+      );
+      
+      // Profile 3: Highway-averse
+      candidatePromises.push(
+        provider.calculateRoute({ locations, mode, avoidTolls: false, avoidHighways: true })
+          .then(res => ({ ...res, candidateId: "no-highways", costingProfile: "avoid_highways" }))
+          .catch(() => null)
+      );
+    }
+
+    // Wait for all to finish
+    const settled = await Promise.allSettled(candidatePromises);
+    const candidates: RouteCandidate[] = [];
+    
+    for (const result of settled) {
+      if (result.status === "fulfilled" && result.value) {
+        // deduplicate identical routes by distance and time 
+        // to avoid presenting functionally identical routes
+        const exists = candidates.find(c => 
+          Math.abs(c.distanceKm - result.value!.distanceKm) < 0.01 && 
+          Math.abs(c.durationMinutes - result.value!.durationMinutes) < 0.1
+        );
+        if (!exists) {
+          candidates.push(result.value as RouteCandidate);
+        }
+      }
+    }
+
+    if (candidates.length === 0) {
+      throw new Error("Failed to generate any route candidates.");
+    }
+
+    // Evaluate candidates
+    const evaluations = candidates.map(c => engine.evaluate(c, typedConstraints));
+
+    // Rank candidates
+    const ranking = engine.rank(evaluations);
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(ranking, null, 2)
+        }
+      ]
+    };
+  } catch (error: any) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({ feasible: false, error: error.message || "An error occurred during route comparison" })
+        }
+      ],
+      isError: true,
+    };
+  }
+};

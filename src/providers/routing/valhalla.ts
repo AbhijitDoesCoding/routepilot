@@ -71,7 +71,7 @@ export class ValhallaProvider implements RoutingProvider {
 
       interface ValhallaResponse {
         trip?: {
-          summary?: { length?: number; time?: number };
+          summary?: { length?: number; time?: number; has_toll?: boolean; has_highway?: boolean };
           legs?: Array<{
             shape?: string;
             summary?: { length?: number; time?: number };
@@ -97,6 +97,7 @@ export class ValhallaProvider implements RoutingProvider {
       const allCoordinates: [number, number][] = [];
       const allManeuvers: any[] = [];
       const allLegs: any[] = [];
+      let walkingDistanceMeters = 0;
 
       for (const leg of data.trip.legs) {
         if (!leg.shape) {
@@ -110,6 +111,12 @@ export class ValhallaProvider implements RoutingProvider {
         
         if (Array.isArray(leg.maneuvers)) {
           allManeuvers.push(...leg.maneuvers);
+          // Accumulate walking distance if any maneuvers indicate pedestrian
+          for (const m of leg.maneuvers) {
+            if (m.travel_mode === "pedestrian" && m.length) {
+              walkingDistanceMeters += (m.length * 1000); // Valhalla lengths are in km
+            }
+          }
         }
         
         if (!leg.summary || typeof leg.summary.length !== "number" || typeof leg.summary.time !== "number") {
@@ -130,6 +137,9 @@ export class ValhallaProvider implements RoutingProvider {
       return {
         distanceKm: summary.length,
         durationMinutes: summary.time / 60,
+        hasToll: !!summary.has_toll,
+        hasHighway: !!summary.has_highway,
+        walkingDistanceMeters: request.mode === "pedestrian" ? summary.length * 1000 : (walkingDistanceMeters > 0 ? walkingDistanceMeters : undefined),
         geometry: geojson,
         legs: allLegs,
         maneuvers: allManeuvers,

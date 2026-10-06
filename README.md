@@ -2,15 +2,15 @@
 
 RoutePilot is a conversational travel-planning and decision-making agent designed for the "Build, Ship, Shape: Amazon Developer Hackathon 2026". Instead of requiring manual travel configurations, users can state their travel goals in natural language, and RoutePilot manages constraints and evaluates deterministic route options to recommend the best plan.
 
-## Current Phase: Phase 3 (Valhalla Routing)
+## Current Phase: Phase 4 (Route Comparison and Constraints)
 
-We are currently at **Phase 3**, which integrates deterministic routing using Valhalla through the MCP server.
+We are currently at **Phase 4**, which introduces deterministic constraint evaluation and the `compare_routes` tool.
 
-*Note: The next phase will implement route comparison and constraint evaluation. AI agent logic, map visualization (MapLibre), live traffic, weather, and the conversational frontend are **future phases** and are not yet implemented. This system does NOT currently provide live or Google-style traffic data.*
+*Note: AI agent logic, map visualization (MapLibre), live traffic, weather, and the conversational frontend are **future phases** and are not yet implemented. This system does NOT currently provide live or Google-style traffic data.*
 
 ### Architecture at this Stage
 
-The current architecture consists of a Node.js HTTP server exposing an MCP interface (using Streamable HTTP). The `NominatimProvider` serves as a clean abstraction for geocoding, and the `ValhallaProvider` abstracts the route calculation and Polyline-to-GeoJSON normalization. The LLM agent will only interact with the normalized MCP schema.
+The current architecture consists of a Node.js HTTP server exposing an MCP interface (using Streamable HTTP). The `NominatimProvider` serves as a clean abstraction for geocoding, and the `ValhallaProvider` abstracts route calculation. The `ConstraintEngine` deterministically evaluates route candidates against hard constraints and soft preferences (e.g. avoiding tolls, highways, deadline math) entirely within the RoutePilot domain, removing the need for an LLM to perform arithmetic or evaluate path logic.
 
 ### Configuration
 
@@ -71,6 +71,7 @@ Currently, the server exposes the following MCP tools:
 - **`health_check`**: Returns structural information validating the health of the RoutePilot MCP server.
 - **`geocode`**: Converts a human-readable place or address into geographic locations.
 - **`calculate_route`**: Calculates a deterministic route between two or more geographic locations.
+- **`compare_routes`**: Generates and evaluates multiple route candidates against constraints and returns a ranked recommendation.
 
 #### Example MCP Usage (calculate_route)
 

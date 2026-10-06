@@ -70,15 +70,17 @@ describe("MCP Server Integration", () => {
     mock.restoreAll();
   });
 
-  test("should discover health_check, geocode, and calculate_route tools", async () => {
+  test("should discover health_check, geocode, calculate_route, and compare_routes tools", async () => {
     const tools = await client.listTools();
     const healthTool = tools.tools.find((t) => t.name === "health_check");
     const geocodeTool = tools.tools.find((t) => t.name === "geocode");
     const calculateRouteTool = tools.tools.find((t) => t.name === "calculate_route");
+    const compareRoutesTool = tools.tools.find((t) => t.name === "compare_routes");
     
     assert.ok(healthTool, "health_check tool should be present");
     assert.ok(geocodeTool, "geocode tool should be present");
     assert.ok(calculateRouteTool, "calculate_route tool should be present");
+    assert.ok(compareRoutesTool, "compare_routes tool should be present");
   });
 
   test("should call health_check tool", async () => {
@@ -176,5 +178,68 @@ describe("MCP Server Integration", () => {
     assert.strictEqual(data.distanceKm, 25.5);
     assert.strictEqual(data.durationMinutes, 40); // 2400 / 60
     assert.strictEqual(data.geometry.type, "LineString");
+  });
+
+  test("should call compare_routes tool with mock data", async () => {
+    const originalFetch = globalThis.fetch;
+    mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const urlString = input.toString();
+      if (urlString.includes("route")) {
+        const body = JSON.parse((init?.body as string) || "{}");
+        const isTollAverse = body.costing_options?.auto?.use_tolls === 0;
+        const isHighwayAverse = body.costing_options?.auto?.use_highways === 0;
+        
+        return new Response(
+          JSON.stringify({
+            trip: {
+              summary: { 
+                length: isTollAverse ? 30.5 : (isHighwayAverse ? 35 : 25.5), 
+                time: isTollAverse ? 3000 : (isHighwayAverse ? 3600 : 2400),
+                has_toll: !isTollAverse,
+                has_highway: !isHighwayAverse
+              },
+              legs: [
+                {
+                  shape: "_p~iF~ps|U",
+                  summary: { 
+                    length: isTollAverse ? 30.5 : (isHighwayAverse ? 35 : 25.5), 
+                    time: isTollAverse ? 3000 : (isHighwayAverse ? 3600 : 2400) 
+                  },
+                  maneuvers: []
+                }
+              ]
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      return originalFetch(input, init);
+    });
+
+    const result = await client.callTool({
+      name: "compare_routes",
+      arguments: { 
+        locations: [{ lat: 10, lon: 10 }, { lat: 20, lon: 20 }],
+        mode: "auto",
+        constraints: [
+          { type: "avoid_tolls", severity: "hard" }
+        ]
+      }
+    });
+
+    assert.ok(result.content.length > 0);
+    const content = result.content[0];
+    assert.strictEqual(content.type, "text");
+
+    const data = JSON.parse(content.text);
+    
+    assert.strictEqual(data.feasible, true);
+    assert.strictEqual(data.recommended.route.candidateId, "no-tolls");
+    assert.strictEqual(data.recommended.valid, true);
+    
+    const invalidAlt = data.alternatives.find((a: any) => a.route.candidateId === "fastest");
+    assert.ok(invalidAlt, "fastest route should be in alternatives");
+    assert.strictEqual(invalidAlt.valid, false);
+    assert.ok(invalidAlt.violatedConstraints.includes("avoid_tolls"));
   });
 });
