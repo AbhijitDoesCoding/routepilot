@@ -18,6 +18,15 @@ export const compareRoutesDefinition = {
     ).min(2).describe("Waypoints to route between"),
     mode: z.enum(["auto", "pedestrian", "bicycle"]).default("auto").describe("Transport mode"),
     departure_time: z.string().datetime({ offset: true }).optional().describe("ISO-8601 departure time (required to evaluate arrival_deadline)"),
+    stops: z.array(
+      z.object({
+        locationIndex: z.number().int().min(0).describe("Index in the locations array this stop corresponds to"),
+        name: z.string(),
+        lat: z.number(),
+        lon: z.number(),
+        durationMinutes: z.number().positive().describe("Dwell time at the stop in minutes")
+      })
+    ).optional().describe("Optional intermediate stops with dwell duration"),
     constraints: z.array(
       z.discriminatedUnion("type", [
         z.object({ type: z.literal("avoid_tolls"), severity: z.enum(["hard", "soft"]) }),
@@ -31,16 +40,35 @@ export const compareRoutesDefinition = {
 
 export const compareRoutesHandler = async (args: any) => {
   try {
-    const { locations, mode, departure_time, constraints } = args;
+    const { locations, mode, departure_time, constraints, stops } = args;
     const typedConstraints = constraints as RouteConstraint[];
+    
+    // Calculate total stop duration
+    let stopDurationMinutes = 0;
+    if (stops && Array.isArray(stops)) {
+      stopDurationMinutes = stops.reduce((acc, stop) => acc + (stop.durationMinutes || 0), 0);
+    }
 
     // Generate candidates by varying profiles if applicable
     const candidatePromises = [];
 
+    // Helper to inject stop duration
+    const processResult = (res: any, id: string, profile: string) => {
+      const drivingDuration = res.durationMinutes;
+      return {
+        ...res,
+        drivingDurationMinutes: drivingDuration,
+        stopDurationMinutes: stopDurationMinutes,
+        durationMinutes: drivingDuration + stopDurationMinutes,
+        candidateId: id,
+        costingProfile: profile
+      };
+    };
+
     // Profile 1: Default (Fastest)
     candidatePromises.push(
       provider.calculateRoute({ locations, mode, avoidTolls: false, avoidHighways: false })
-        .then(res => ({ ...res, candidateId: "fastest", costingProfile: "default" }))
+        .then(res => processResult(res, "fastest", "default"))
         .catch(err => { console.error("Fastest failed:", err); return null; })
     );
 
@@ -53,7 +81,7 @@ export const compareRoutesHandler = async (args: any) => {
       if (avoidTollsRelevant) {
         candidatePromises.push(
           provider.calculateRoute({ locations, mode, avoidTolls: true, avoidHighways: false })
-            .then(res => ({ ...res, candidateId: "no-tolls", costingProfile: "avoid_tolls" }))
+            .then(res => processResult(res, "no-tolls", "avoid_tolls"))
             .catch(() => null)
         );
       }
@@ -62,7 +90,7 @@ export const compareRoutesHandler = async (args: any) => {
       if (avoidHighwaysRelevant) {
         candidatePromises.push(
           provider.calculateRoute({ locations, mode, avoidTolls: false, avoidHighways: true })
-            .then(res => ({ ...res, candidateId: "no-highways", costingProfile: "avoid_highways" }))
+            .then(res => processResult(res, "no-highways", "avoid_highways"))
             .catch(() => null)
         );
       }
@@ -71,7 +99,7 @@ export const compareRoutesHandler = async (args: any) => {
       if (avoidTollsRelevant && avoidHighwaysRelevant) {
         candidatePromises.push(
           provider.calculateRoute({ locations, mode, avoidTolls: true, avoidHighways: true })
-            .then(res => ({ ...res, candidateId: "no-tolls-no-highways", costingProfile: "avoid_tolls_and_highways" }))
+            .then(res => processResult(res, "no-tolls-no-highways", "avoid_tolls_and_highways"))
             .catch(() => null)
         );
       }

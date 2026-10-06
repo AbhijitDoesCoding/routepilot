@@ -228,3 +228,35 @@ See Section 11 for the interface structure.
 
 ## 34. Future Extensibility
 The provider model allows swapping Nominatim for Google Places or Valhalla for Mapbox Routing later without changing the LLM prompts or core logic. New MCP tools can be added easily by extending the server definition.
+ 
+ 
+## 32. Phase 7 - Route-Aware Stop Planning
+
+RoutePilot supports natural-language stop requests such as: "I need to reach Pune Airport by 7 AM and find a coffee shop on the way."
+
+### PlacesProvider / OverpassProvider
+POI discovery uses the public Overpass API (OpenStreetMap data). The endpoint is configurable via OVERPASS_BASE_URL. Only OSM nodes with a name tag are returned. Currently supports: coffee_shop, cafe (amenity=cafe).
+
+### find_places_along_route MCP Tool
+This tool calculates a baseline route first, then queries Overpass for POIs within a corridor around the actual route geometry. Results are deterministically ordered by distance to the route. The agent is strictly forbidden from inventing places; it must select from this tool's results.
+
+### Stop Duration Arithmetic
+When stops are provided to compare_routes, the tool computes:
+- drivingDurationMinutes: raw Valhalla duration
+- stopDurationMinutes: sum of stop dwell times
+- durationMinutes: drivingDurationMinutes + stopDurationMinutes (TOTAL)
+
+All deadline arithmetic (latestDeparture, ETA, buffer) operates on durationMinutes (total). The LLM never performs this calculation.
+
+### Data Flow
+Browser ? /api/chat ? BedrockAgent ?
+  1. geocode (origin/destination)
+  2. compare_routes (baseline)
+  3. find_places_along_route (corridor search)
+  4. compare_routes with stops[] (final route + dwell)
+? deterministic TravelPlan (stops, durations, times, constraints)
+? MapLibre renders stop markers in amber
+
+### Configuration
+OVERPASS_BASE_URL=https://overpass-api.de/api/interpreter
+OVERPASS_USER_AGENT=RoutePilot/1.0

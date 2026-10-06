@@ -76,9 +76,12 @@ export const RouteMap = ({ plan }: RouteMapProps) => {
 
       // Helper to create a marker
       const addMarker = (loc: Location, color: string, label: string) => {
+        const popup = new maplibregl.Popup({ offset: 25 });
+        const displayName = loc.name ? `${label}: ${loc.name}` : label;
+        popup.setText(displayName);
         const marker = new maplibregl.Marker({ color })
           .setLngLat([loc.lon, loc.lat])
-          .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(`<strong>${label}</strong><br/>${loc.name || ""}`))
+          .setPopup(popup)
           .addTo(currentMap);
         markersRef.current.push(marker);
       };

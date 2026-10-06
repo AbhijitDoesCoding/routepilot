@@ -183,9 +183,17 @@ export class BedrockAgent {
         context.travelPlan.transportMode = input.mode;
       }
       
+      if (input.stops && Array.isArray(input.stops)) {
+        context.travelPlan.stops = input.stops;
+      } else {
+        context.travelPlan.stops = undefined;
+      }
+      
       if (result.feasible && result.recommended && result.recommended.route) {
         const route = result.recommended.route;
         context.travelPlan.durationMinutes = route.durationMinutes;
+        context.travelPlan.drivingDurationMinutes = route.drivingDurationMinutes;
+        context.travelPlan.stopDurationMinutes = route.stopDurationMinutes;
         context.travelPlan.distanceKm = route.distanceKm;
         context.travelPlan.routeGeometry = route.geometry;
         

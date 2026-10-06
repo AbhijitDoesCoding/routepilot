@@ -16,7 +16,9 @@ export interface TravelPlan {
   actualEta?: string; // ISO-8601
   arrivalDeadline?: string; // ISO-8601
   bufferMinutes?: number;
-  durationMinutes?: number;
+  durationMinutes?: number; // Total duration
+  drivingDurationMinutes?: number;
+  stopDurationMinutes?: number;
   distanceKm?: number;
   transportMode?: string;
   routeGeometry?: any; // GeoJSON LineString

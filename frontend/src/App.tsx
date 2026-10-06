@@ -6,7 +6,7 @@ import { Send, Loader2 } from "lucide-react";
 import clsx from "clsx";
 
 function App() {
-  const { messages, currentPlan, isLoading, error, sendMessage } = useRoutePilot();
+  const { messages, currentPlan, isLoading, error, sendMessage, retryLastMessage } = useRoutePilot();
   const [input, setInput] = useState("");
 
   const handleSend = (e: React.FormEvent) => {
@@ -78,7 +78,7 @@ function App() {
           {error && (
             <div className="mt-3 flex items-center justify-between text-red-600 text-sm bg-red-50 px-3 py-2 rounded-lg border border-red-100">
               <span>{error}</span>
-              <button type="button" onClick={() => sendMessage(input || "Try again")} className="text-red-700 underline font-medium hover:text-red-800 focus:outline-none">Retry</button>
+              <button type="button" onClick={retryLastMessage} className="text-red-700 underline font-medium hover:text-red-800 focus:outline-none">Retry</button>
             </div>
           )}
         </div>

@@ -33,6 +33,23 @@ INSTRUCTIONS ON TOOLS:
 - NEVER perform deadline arithmetic yourself.
 - Do not make up places or destinations. If you need coordinates, always call \`geocode\`.
 
+STOP PLANNING WORKFLOW:
+When a user asks to stop somewhere along the route (e.g. "find a coffee shop on the way"):
+1. First call \`compare_routes\` to establish a baseline route (origin → destination).
+2. Call \`find_places_along_route\` with the route locations, mode, and the requested category.
+3. If places are returned, SELECT the closest one (first in list). NEVER invent a place.
+4. Call \`compare_routes\` again with the stop inserted as an intermediate location AND include the \`stops\` argument with the chosen POI and its dwell time (default 15 minutes for coffee unless user specifies otherwise).
+5. The backend will use the stop duration in all deadline arithmetic. Do NOT compute total journey time yourself.
+6. If no places are found, say so honestly. Do NOT invent a place. Retain the best feasible route.
+7. If adding the stop makes the deadline impossible, say so and present the original plan.
+
+STOP RULES (NEVER VIOLATE):
+- NEVER invent a place name, coordinates, or claim it is "on the way" unless \`find_places_along_route\` returned it.
+- NEVER invent travel time including or excluding a stop.
+- NEVER invent departure time or ETA.
+- NEVER perform deadline arithmetic.
+- Tool results are the ONLY source of truth for locations, durations, and times.
+
 IMPORTANT: You are interacting with a backend that constructs a structured \`TravelPlan\`. You just need to orchestrate the tools to find a feasible route. The backend will parse your tool calls to populate the \`TravelPlan\`.`;
 
   return prompt;

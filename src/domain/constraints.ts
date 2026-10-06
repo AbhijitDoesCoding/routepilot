@@ -32,6 +32,8 @@ export interface RouteEvaluation {
 export interface RouteCandidate extends RouteResult {
   candidateId: string;
   costingProfile: string;
+  drivingDurationMinutes?: number;
+  stopDurationMinutes?: number;
 }
 
 export class ConstraintEngine {

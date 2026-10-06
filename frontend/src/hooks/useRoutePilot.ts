@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import type { ChatMessage, TravelPlan, AgentResponse } from "../types/api";
 
 const generateId = () => crypto.randomUUID();
@@ -9,6 +9,8 @@ export const useRoutePilot = () => {
   const [currentPlan, setCurrentPlan] = useState<TravelPlan | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Store the last failed message so Retry can replay the exact text
+  const lastFailedMessage = useRef<string | null>(null);
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim()) return;
@@ -17,6 +19,7 @@ export const useRoutePilot = () => {
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
     setError(null);
+    lastFailedMessage.current = null;
 
     try {
       const response = await fetch("/api/chat", {
@@ -49,11 +52,20 @@ export const useRoutePilot = () => {
       }
     } catch (err: any) {
       console.error(err);
+      lastFailedMessage.current = text;
+      // Remove the optimistic user message since it failed
+      setMessages((prev) => prev.filter(m => m.text !== text || m.role !== "user" || m.id !== userMessage.id));
       setError(err.message || "An error occurred");
     } finally {
       setIsLoading(false);
     }
   }, []);
+
+  const retryLastMessage = useCallback(() => {
+    if (lastFailedMessage.current) {
+      sendMessage(lastFailedMessage.current);
+    }
+  }, [sendMessage]);
 
   return {
     messages,
@@ -61,5 +73,6 @@ export const useRoutePilot = () => {
     isLoading,
     error,
     sendMessage,
+    retryLastMessage,
   };
 };

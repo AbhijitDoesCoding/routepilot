@@ -47,23 +47,27 @@ export const TravelPlanCard = ({ plan }: { plan: TravelPlan | null }) => {
     );
   };
 
+  const routeTitle = (): string => {
+    if (!plan.origin?.name && !plan.destination?.name) return "Route Selected";
+    const parts: string[] = [];
+    if (plan.origin?.name) parts.push(plan.origin.name);
+    if (plan.stops?.length) {
+      plan.stops.forEach(s => parts.push(s.name));
+    }
+    if (plan.destination?.name) parts.push(plan.destination.name);
+    return parts.join(" → ");
+  };
+
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm flex flex-col gap-6">
       <div>
         <h2 className="text-xs text-gray-500 font-bold tracking-wide uppercase mb-1">
           Recommended Plan
         </h2>
-        {plan.origin?.name && plan.destination?.name ? (
-          <p className="text-lg font-bold text-gray-900 flex items-center gap-2">
-            <MapPin className="w-5 h-5 text-blue-500" />
-            {plan.origin.name} → {plan.destination.name}
-          </p>
-        ) : (
-          <p className="text-lg font-bold text-gray-900 flex items-center gap-2">
-            <MapPin className="w-5 h-5 text-blue-500" />
-            Route Selected
-          </p>
-        )}
+        <p className="text-lg font-bold text-gray-900 flex items-center gap-2">
+          <MapPin className="w-5 h-5 text-blue-500 shrink-0" />
+          <span>{routeTitle()}</span>
+        </p>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -93,6 +97,21 @@ export const TravelPlanCard = ({ plan }: { plan: TravelPlan | null }) => {
             <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Distance</span>
             <span className="text-lg text-gray-800">{plan.distanceKm.toFixed(1)} km</span>
           </div>
+        )}
+
+        {plan.drivingDurationMinutes !== undefined && plan.stopDurationMinutes !== undefined && plan.stopDurationMinutes > 0 && (
+          <>
+            <div className="flex flex-col">
+              <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Driving</span>
+              <span className="text-lg text-gray-800">{Math.round(plan.drivingDurationMinutes)} min</span>
+            </div>
+            {plan.stops?.map((stop, i) => (
+              <div key={i} className="flex flex-col">
+                <span className="text-xs text-amber-600 font-medium uppercase tracking-wide">{stop.name}</span>
+                <span className="text-lg text-amber-700">{stop.durationMinutes} min stop</span>
+              </div>
+            ))}
+          </>
         )}
 
         {plan.bufferMinutes !== undefined && (
