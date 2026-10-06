@@ -26,7 +26,12 @@ export const useRoutePilot = () => {
       });
 
       if (!response.ok) {
-        throw new Error("Route planning is temporarily unavailable.");
+        let msg = "Route planning is temporarily unavailable.";
+        try {
+          const errData = await response.json();
+          if (errData.error) msg = errData.error;
+        } catch {}
+        throw new Error(msg);
       }
 
       const data: AgentResponse = await response.json();

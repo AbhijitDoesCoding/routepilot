@@ -95,6 +95,6 @@ describe("Chat API", () => {
     
     assert.strictEqual(res.statusCode, 500);
     const data = JSON.parse(res.body);
-    assert.strictEqual(data.error, "Bedrock failure");
+    assert.strictEqual(data.error, "Route planning is temporarily unavailable.");
   });
 });

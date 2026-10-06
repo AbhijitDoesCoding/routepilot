@@ -189,6 +189,10 @@ export class BedrockAgent {
         context.travelPlan.distanceKm = route.distanceKm;
         context.travelPlan.routeGeometry = route.geometry;
         
+        if (result.recommended.constraintEvaluations) {
+          context.travelPlan.constraintEvaluations = result.recommended.constraintEvaluations;
+        }
+        
         const arrivalConstraint = input.constraints?.find((c: any) => c.type === "arrival_deadline");
         
         if (input.departure_time) {

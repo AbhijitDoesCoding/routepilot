@@ -53,14 +53,9 @@ function App() {
             </div>
           )}
 
-          {error && (
-            <div className="self-center text-red-600 text-sm bg-red-50 px-4 py-2 rounded-lg border border-red-100">
-              {error}
-            </div>
-          )}
         </div>
 
-        <div className="p-4 bg-white border-t border-gray-100">
+        <div className="p-4 bg-white border-t border-gray-100 shadow-sm">
           <form onSubmit={handleSend} className="relative flex items-center">
             <input
               type="text"
@@ -68,27 +63,37 @@ function App() {
               onChange={(e) => setInput(e.target.value)}
               disabled={isLoading}
               placeholder="Where do you want to go?"
-              className="w-full pl-4 pr-12 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:bg-gray-50"
+              aria-label="Message input"
+              className="w-full pl-4 pr-12 py-3 bg-gray-50 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white focus:border-transparent disabled:opacity-50 transition-colors shadow-inner"
             />
             <button
               type="submit"
+              aria-label="Send message"
               disabled={isLoading || !input.trim()}
-              className="absolute right-2 p-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              className="absolute right-2 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 transition-colors shadow-sm"
             >
               <Send className="w-4 h-4" />
             </button>
           </form>
+          {error && (
+            <div className="mt-3 flex items-center justify-between text-red-600 text-sm bg-red-50 px-3 py-2 rounded-lg border border-red-100">
+              <span>{error}</span>
+              <button type="button" onClick={() => sendMessage(input || "Try again")} className="text-red-700 underline font-medium hover:text-red-800 focus:outline-none">Retry</button>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Right Panel: Map & Plan */}
-      <div className="flex-1 flex flex-col relative h-[50vh] md:h-screen bg-gray-100">
+      <div className="flex-1 flex flex-col relative h-[50vh] md:h-screen bg-gray-100 overflow-hidden">
         <div className="absolute inset-0 z-0">
           <RouteMap plan={currentPlan} />
         </div>
         
-        <div className="relative z-10 p-4 w-full md:max-w-md lg:max-w-lg mx-auto md:mr-auto md:ml-4 mt-4">
-          <TravelPlanCard plan={currentPlan} />
+        <div className="relative z-10 p-4 w-full md:max-w-md lg:max-w-lg mx-auto md:mr-auto md:ml-4 mt-4 pointer-events-none">
+          <div className="pointer-events-auto">
+            <TravelPlanCard plan={currentPlan} />
+          </div>
         </div>
       </div>
     </div>

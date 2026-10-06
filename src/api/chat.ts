@@ -10,7 +10,8 @@ const chatRequestSchema = z.object({
 export const createChatHandler = (agent: BedrockAgent) => {
   return async (req: IncomingMessage, res: ServerResponse) => {
     // Add CORS headers
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    const allowedOrigin = process.env.CORS_ORIGIN || "http://localhost:5173";
+    res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
@@ -54,7 +55,7 @@ export const createChatHandler = (agent: BedrockAgent) => {
     } catch (err: any) {
       console.error("Chat API Error:", err);
       res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: err.message || "Internal Server Error" }));
+      res.end(JSON.stringify({ error: "Route planning is temporarily unavailable." }));
     }
   };
 };

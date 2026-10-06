@@ -10,6 +10,13 @@ export interface RouteConstraint {
   value?: any;
 }
 
+export interface ConstraintEvaluation {
+  type: string;
+  severity: "hard" | "soft";
+  status: "satisfied" | "violated" | "not_evaluable";
+  reason?: string;
+}
+
 export interface TravelPlan {
   id: string;
   origin?: Location;
@@ -25,6 +32,7 @@ export interface TravelPlan {
   stops?: Array<{ name: string; lat: number; lon: number; durationMinutes: number }>;
   warnings?: string[];
   constraints?: RouteConstraint[];
+  constraintEvaluations?: ConstraintEvaluation[];
 }
 
 export interface AgentResponse {

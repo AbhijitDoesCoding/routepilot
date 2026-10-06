@@ -51,13 +51,24 @@ The current architecture consists of a Node.js HTTP server exposing an MCP inter
 
 ### Configuration
 
-To run the tools, you must set configuration values. Copy `.env.example` to `.env` and set:
+To run the backend tools, you must set configuration values. Copy `.env.example` to `.env` and set:
 
 ```env
 PORT=3000
 NOMINATIM_BASE_URL=https://nominatim.openstreetmap.org
 NOMINATIM_USER_AGENT=RoutePilot/0.1.0
 VALHALLA_BASE_URL=http://localhost:8002
+CORS_ORIGIN=http://localhost:5173
+```
+
+**Frontend Configuration:**
+In the `frontend/` directory, create a `.env` file (if you wish to override defaults):
+```env
+# Optional: defaults to /api proxy in Vite
+VITE_API_BASE_URL=http://localhost:3000
+
+# Optional: defaults to OpenFreeMap Liberty
+VITE_MAP_STYLE_URL=https://tiles.openfreemap.org/styles/liberty
 ```
 
 **⚠️ Public Nominatim Usage Limitations:**

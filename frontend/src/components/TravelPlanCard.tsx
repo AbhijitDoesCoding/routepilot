@@ -1,5 +1,6 @@
-import type { TravelPlan } from "../types/api";
+import type { TravelPlan, ConstraintEvaluation } from "../types/api";
 import { MapPin, Navigation } from "lucide-react";
+import clsx from "clsx";
 
 export const TravelPlanCard = ({ plan }: { plan: TravelPlan | null }) => {
   if (!plan) {
@@ -16,16 +17,51 @@ export const TravelPlanCard = ({ plan }: { plan: TravelPlan | null }) => {
     return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const renderBuffer = (buffer?: number) => {
+    if (buffer === undefined) return null;
+    if (buffer > 0) return <span className="text-lg text-green-600 font-medium">{buffer} min buffer</span>;
+    if (buffer === 0) return <span className="text-lg text-gray-800 font-medium">0 min buffer</span>;
+    return <span className="text-lg text-red-600 font-medium">{Math.abs(buffer)} min late</span>;
+  };
+
+  const renderConstraintIcon = (status: string) => {
+    if (status === "satisfied") return <span className="text-green-600 font-bold mr-1">✓</span>;
+    if (status === "violated") return <span className="text-red-600 font-bold mr-1">⚠</span>;
+    return <span className="text-gray-400 font-bold mr-1">○</span>; // not evaluable
+  };
+
+  const renderConstraint = (evalData: ConstraintEvaluation, idx: number) => {
+    const label = evalData.type.replace(/_/g, ' ');
+    const isViolated = evalData.status === "violated";
+    const isSatisfied = evalData.status === "satisfied";
+
+    return (
+      <div key={idx} className={clsx(
+        "px-2 py-1 text-xs rounded-full border flex items-center gap-1 capitalize",
+        isSatisfied && "bg-green-50 text-green-700 border-green-200",
+        isViolated && "bg-red-50 text-red-700 border-red-200",
+        !isSatisfied && !isViolated && "bg-gray-50 text-gray-700 border-gray-200"
+      )}>
+        {renderConstraintIcon(evalData.status)} {label} {isViolated && "unavailable"}
+      </div>
+    );
+  };
+
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm flex flex-col gap-6">
       <div>
-        <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-          <MapPin className="w-5 h-5 text-blue-500" />
-          Plan Details
+        <h2 className="text-xs text-gray-500 font-bold tracking-wide uppercase mb-1">
+          Recommended Plan
         </h2>
-        {plan.origin?.name && plan.destination?.name && (
-          <p className="text-sm text-gray-600 mt-1">
+        {plan.origin?.name && plan.destination?.name ? (
+          <p className="text-lg font-bold text-gray-900 flex items-center gap-2">
+            <MapPin className="w-5 h-5 text-blue-500" />
             {plan.origin.name} → {plan.destination.name}
+          </p>
+        ) : (
+          <p className="text-lg font-bold text-gray-900 flex items-center gap-2">
+            <MapPin className="w-5 h-5 text-blue-500" />
+            Route Selected
           </p>
         )}
       </div>
@@ -47,7 +83,7 @@ export const TravelPlanCard = ({ plan }: { plan: TravelPlan | null }) => {
 
         {plan.durationMinutes !== undefined && (
           <div className="flex flex-col">
-            <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Duration</span>
+            <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Travel Time</span>
             <span className="text-lg text-gray-800">{Math.round(plan.durationMinutes)} min</span>
           </div>
         )}
@@ -55,28 +91,46 @@ export const TravelPlanCard = ({ plan }: { plan: TravelPlan | null }) => {
         {plan.distanceKm !== undefined && (
           <div className="flex flex-col">
             <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Distance</span>
-            <span className="text-lg text-gray-800">{Math.round(plan.distanceKm)} km</span>
+            <span className="text-lg text-gray-800">{plan.distanceKm.toFixed(1)} km</span>
           </div>
         )}
 
-        {plan.bufferMinutes !== undefined && plan.bufferMinutes > 0 && (
-          <div className="flex flex-col">
+        {plan.bufferMinutes !== undefined && (
+          <div className="flex flex-col col-span-2">
             <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Buffer</span>
-            <span className="text-lg text-green-600 font-medium">{plan.bufferMinutes} min</span>
+            {renderBuffer(plan.bufferMinutes)}
           </div>
         )}
       </div>
 
-      {plan.constraints && plan.constraints.length > 0 && (
+      {plan.constraintEvaluations && plan.constraintEvaluations.length > 0 && (
         <div className="border-t border-gray-100 pt-4">
           <span className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2 block">Constraints</span>
           <div className="flex flex-wrap gap-2">
+            {plan.constraintEvaluations.map((c, i) => renderConstraint(c, i))}
+          </div>
+        </div>
+      )}
+      
+      {(!plan.constraintEvaluations || plan.constraintEvaluations.length === 0) && plan.constraints && plan.constraints.length > 0 && (
+        <div className="border-t border-gray-100 pt-4">
+          <span className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-2 block">Constraints (Requested)</span>
+          <div className="flex flex-wrap gap-2">
             {plan.constraints.map((c, i) => (
-              <span key={i} className="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full border border-blue-100 flex items-center gap-1">
-                ✓ {c.type.replace('_', ' ')}
+              <span key={i} className="px-2 py-1 bg-gray-50 text-gray-700 text-xs rounded-full border border-gray-200 capitalize flex items-center gap-1">
+                {c.type.replace(/_/g, ' ')}
               </span>
             ))}
           </div>
+        </div>
+      )}
+
+      {plan.warnings && plan.warnings.length > 0 && (
+        <div className="bg-yellow-50 text-yellow-800 p-3 rounded-lg text-sm border border-yellow-200">
+          <strong>Warnings:</strong>
+          <ul className="list-disc pl-4 mt-1">
+            {plan.warnings.map((w, i) => <li key={i}>{w}</li>)}
+          </ul>
         </div>
       )}
     </div>
