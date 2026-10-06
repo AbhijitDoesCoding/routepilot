@@ -2,6 +2,11 @@ import { Client } from "@modelcontextprotocol/client";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { Tool } from "@aws-sdk/client-bedrock-runtime";
 
+export interface MCPToolResult {
+  isError: boolean;
+  data: any;
+}
+
 export class MCPClientService {
   private client: Client;
   private transport: StreamableHTTPClientTransport;
@@ -45,23 +50,28 @@ export class MCPClientService {
   /**
    * Execute an MCP tool by name with arguments.
    */
-  public async executeTool(name: string, args: any): Promise<any> {
+  public async executeTool(name: string, args: Record<string, any>): Promise<MCPToolResult> {
     const result = await this.client.callTool({
       name,
       arguments: args
     });
     
+    let data: any = result;
     // Attempt to parse JSON content if possible
     if (result.content && result.content.length > 0) {
       const firstContent = result.content[0] as any;
       if (firstContent.type === "text") {
         try {
-          return JSON.parse(firstContent.text);
+          data = JSON.parse(firstContent.text);
         } catch {
-          return firstContent.text;
+          data = firstContent.text;
         }
       }
     }
-    return result;
+    
+    return {
+      isError: !!result.isError,
+      data
+    };
   }
 }

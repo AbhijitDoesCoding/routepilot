@@ -1,4 +1,4 @@
-import { test, describe, mock, afterEach } from "node:test";
+import { test, describe, mock, afterEach, beforeEach } from "node:test";
 import * as assert from "node:assert";
 import { BedrockAgent } from "../../src/agent/client.js";
 import { MCPClientService } from "../../src/mcp/client/index.js";
@@ -7,6 +7,10 @@ import { Clock } from "../../src/agent/clock.js";
 import { ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 
 describe("Agent Loop", () => {
+  beforeEach(() => {
+    process.env.BEDROCK_MODEL_ID = "mock-model";
+  });
+
   afterEach(() => {
     mock.restoreAll();
   });

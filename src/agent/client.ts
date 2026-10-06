@@ -1,11 +1,10 @@
 import { BedrockRuntimeClient, ConverseCommand, Message, Tool, SystemContentBlock } from "@aws-sdk/client-bedrock-runtime";
-import { MCPClientService } from "../mcp/client/index.js";
+import { MCPClientService, MCPToolResult } from "../mcp/client/index.js";
 import { getSystemPrompt } from "./prompts/routepilot.js";
 import { Clock } from "./clock.js";
 import { SessionStore } from "./session.js";
 import { AgentResponse, AgentContext } from "./types.js";
-import { RouteConstraint } from "../domain/constraints.js";
-import { randomUUID } from "node:crypto";
+import { TimeUtils } from "../domain/constraints.js";
 import pino from "pino";
 
 const logger = pino({
@@ -32,7 +31,11 @@ export class BedrockAgent {
     this.clock = clock;
     
     const region = process.env.BEDROCK_REGION || process.env.AWS_REGION || "us-east-1";
-    this.modelId = process.env.BEDROCK_MODEL_ID || "anthropic.claude-3-5-sonnet-20241022-v2:0";
+    const modelId = process.env.BEDROCK_MODEL_ID;
+    if (!modelId) {
+      throw new Error("BEDROCK_MODEL_ID environment variable is required.");
+    }
+    this.modelId = modelId;
     
     this.bedrockClient = new BedrockRuntimeClient({ region });
   }
@@ -96,21 +99,21 @@ export class BedrockAgent {
             
             try {
               const toolStart = Date.now();
-              const result = await this.mcpService.executeTool(toolUse.name!, toolUse.input);
+              const result = await this.mcpService.executeTool(toolUse.name!, toolUse.input as Record<string, any>);
               const toolLatency = Date.now() - toolStart;
               
-              logger.info({ sessionId, toolName: toolUse.name, latencyMs: toolLatency }, "MCP tool execution completed");
+              logger.info({ sessionId, toolName: toolUse.name, latencyMs: toolLatency, isError: result.isError }, "MCP tool execution completed");
 
-              // If compare_routes is called, intercept constraints/results to update TravelPlan in session
-              if (toolUse.name === "compare_routes") {
-                this.updateTravelPlanFromCompareRoutes(context, toolUse.input, result);
+              // If compare_routes is called successfully, update TravelPlan in session
+              if (toolUse.name === "compare_routes" && !result.isError) {
+                this.updateTravelPlanFromCompareRoutes(context, toolUse.input, result.data);
               }
 
               toolResults.push({
                 toolResult: {
                   toolUseId: toolUse.toolUseId,
-                  content: [{ json: result }],
-                  status: "success"
+                  content: [{ json: result.data }],
+                  status: result.isError ? "error" : "success"
                 }
               });
             } catch (err: any) {
@@ -141,7 +144,7 @@ export class BedrockAgent {
       logger.warn({ sessionId }, "Maximum tool rounds exceeded");
       context.messages.push({
         role: "assistant",
-        content: [{ text: "I apologize, but I'm having trouble completing this request right now." }]
+        content: [{ text: "I apologize, but I'm having trouble completing this request right now due to too many tool calls." }]
       });
     }
 
@@ -172,8 +175,12 @@ export class BedrockAgent {
       if (input.constraints) {
         context.travelPlan.constraints = input.constraints;
       }
-      if (input.departure_time) {
-        context.travelPlan.departureTime = input.departure_time;
+      if (input.locations && input.locations.length >= 2) {
+        context.travelPlan.origin = input.locations[0];
+        context.travelPlan.destination = input.locations[input.locations.length - 1];
+      }
+      if (input.mode) {
+        context.travelPlan.transportMode = input.mode;
       }
       
       if (result.feasible && result.recommended && result.recommended.route) {
@@ -182,11 +189,28 @@ export class BedrockAgent {
         context.travelPlan.distanceKm = route.distanceKm;
         context.travelPlan.routeGeometry = route.geometry;
         
-        // Also capture arrival deadlines dynamically if evaluated
-        const arrivalConstraint = result.recommended.constraintEvaluations?.find((e: any) => e.type === "arrival_deadline");
-        if (arrivalConstraint && arrivalConstraint.status === "satisfied" && input.departure_time) {
-          // TravelPlan ETA / Buffers logic can be augmented here
-          context.travelPlan.actualEta = "Calculated from constraints"; // Can parse from Reason text or rebuild TimeUtils logic
+        const arrivalConstraint = input.constraints?.find((c: any) => c.type === "arrival_deadline");
+        
+        if (input.departure_time) {
+          // Departure-first planning
+          context.travelPlan.departureTime = input.departure_time;
+          context.travelPlan.actualEta = TimeUtils.calculateArrivalTime(input.departure_time, route.durationMinutes);
+          
+          if (arrivalConstraint?.value) {
+            context.travelPlan.arrivalDeadline = arrivalConstraint.value;
+            context.travelPlan.bufferMinutes = TimeUtils.calculateBuffer(context.travelPlan.actualEta, arrivalConstraint.value);
+          } else {
+            context.travelPlan.arrivalDeadline = undefined;
+            context.travelPlan.bufferMinutes = undefined;
+          }
+        } else if (arrivalConstraint?.value) {
+          // Deadline-first planning
+          context.travelPlan.arrivalDeadline = arrivalConstraint.value;
+          const requiredBuffer = 0; // Default buffer for now
+          
+          context.travelPlan.departureTime = TimeUtils.calculateLatestDeparture(arrivalConstraint.value, route.durationMinutes, requiredBuffer);
+          context.travelPlan.actualEta = TimeUtils.calculateArrivalTime(context.travelPlan.departureTime, route.durationMinutes);
+          context.travelPlan.bufferMinutes = requiredBuffer;
         }
       }
     } catch (err) {

@@ -114,6 +114,8 @@ interface TravelPlan {
   destination?: Location;
   departureTime?: string; // ISO8601
   actualEta?: string; // ISO8601
+  arrivalDeadline?: string; // ISO8601
+  bufferMinutes?: number;
   durationMinutes?: number;
   distanceKm?: number;
   transportMode?: string;
@@ -128,6 +130,10 @@ interface AgentResponse {
   travelPlan?: TravelPlan;
 }
 ```
+
+## 11.1 Planning Flows
+- **Deadline-First Planning**: User gives deadline (e.g. "arrive by 7 AM"). Agent extracts destination and deadline. Calls `geocode` and `compare_routes`. Application determines route duration and uses `TimeUtils.calculateLatestDeparture()` to populate `departureTime`, `actualEta`, and `bufferMinutes`. The LLM only explains the final plan.
+- **Departure-First Planning**: User gives departure time (e.g. "leave at 6 AM"). Agent calls `compare_routes` with `departure_time`. Application calculates arrival and buffer (if a deadline is also provided).
 
 ## 12. Constraint Model
 Parsed by the LLM from user input and fed into `compare_routes`.

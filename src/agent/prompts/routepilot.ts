@@ -28,7 +28,9 @@ CURRENT CONTEXT:
 
 INSTRUCTIONS ON TOOLS:
 - When resolving constraints, translate them exactly into the \`compare_routes\` constraints array (e.g. { type: "avoid_tolls", severity: "hard" }).
-- If you know the travel duration and the user asked for a departure time to meet a deadline, do NOT do the math yourself. Output the latest departure time that you calculate using the deterministic \`TimeUtils.calculateLatestDeparture()\` in the backend (this will be handled by application logic if you return the arrival deadline constraint).
+- For deadline-first planning (e.g. "I need to arrive by 7 AM"): Call \`compare_routes\` with the \`arrival_deadline\` constraint and DO NOT provide \`departure_time\`. The application will deterministically calculate the latest departure time and ETA outside of your prompt. You just need to explain the resulting plan.
+- For departure-first planning (e.g. "If I leave at 6 AM"): Call \`compare_routes\` with the \`departure_time\` argument.
+- NEVER perform deadline arithmetic yourself.
 - Do not make up places or destinations. If you need coordinates, always call \`geocode\`.
 
 IMPORTANT: You are interacting with a backend that constructs a structured \`TravelPlan\`. You just need to orchestrate the tools to find a feasible route. The backend will parse your tool calls to populate the \`TravelPlan\`.`;

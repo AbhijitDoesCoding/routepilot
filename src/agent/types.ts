@@ -7,6 +7,8 @@ export interface TravelPlan {
   destination?: Location;
   departureTime?: string; // ISO-8601
   actualEta?: string; // ISO-8601
+  arrivalDeadline?: string; // ISO-8601
+  bufferMinutes?: number;
   durationMinutes?: number;
   distanceKm?: number;
   transportMode?: string;
