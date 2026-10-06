@@ -70,13 +70,15 @@ describe("MCP Server Integration", () => {
     mock.restoreAll();
   });
 
-  test("should discover health_check and geocode tools", async () => {
+  test("should discover health_check, geocode, and calculate_route tools", async () => {
     const tools = await client.listTools();
     const healthTool = tools.tools.find((t) => t.name === "health_check");
     const geocodeTool = tools.tools.find((t) => t.name === "geocode");
+    const calculateRouteTool = tools.tools.find((t) => t.name === "calculate_route");
     
     assert.ok(healthTool, "health_check tool should be present");
     assert.ok(geocodeTool, "geocode tool should be present");
+    assert.ok(calculateRouteTool, "calculate_route tool should be present");
   });
 
   test("should call health_check tool", async () => {
@@ -130,5 +132,49 @@ describe("MCP Server Integration", () => {
     assert.strictEqual(data.results[0].lat, 18.5793);
     assert.strictEqual(data.results[0].lon, 73.9089);
     assert.strictEqual(data.results[0].name, "Pune Airport");
+  });
+
+  test("should call calculate_route tool with mock data", async () => {
+    const originalFetch = globalThis.fetch;
+    mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const urlString = input.toString();
+      if (urlString.includes("route")) {
+        return new Response(
+          JSON.stringify({
+            trip: {
+              summary: { length: 25.5, time: 2400 },
+              legs: [
+                {
+                  shape: "shape",
+                  summary: { length: 25.5, time: 2400 },
+                  maneuvers: []
+                }
+              ]
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      return originalFetch(input, init);
+    });
+
+    const result = await client.callTool({
+      name: "calculate_route",
+      arguments: { 
+        locations: [{ lat: 10, lon: 10 }, { lat: 20, lon: 20 }],
+        mode: "auto",
+        avoid_tolls: true,
+        avoid_highways: false
+      }
+    });
+
+    assert.ok(result.content.length > 0);
+    const content = result.content[0];
+    assert.strictEqual(content.type, "text");
+
+    const data = JSON.parse(content.text);
+    assert.strictEqual(data.distanceKm, 25.5);
+    assert.strictEqual(data.durationMinutes, 40); // 2400 / 60
+    assert.strictEqual(data.geometry.type, "LineString");
   });
 });

@@ -59,13 +59,13 @@ Provider implementations
 - **Purpose:** Convert a place name/address into coordinates.
 - **Backend:** Nominatim.
 - **Input Schema:** `{ "query": "string" }`
-- **Output Schema:** `{ "lat": number, "lon": number, "name": "string", "address": "string" }`
+- **Output Schema:** `{ "results": [{ "lat": number, "lon": number, "name": "string", "address": "string" }] }`
 
 ### `calculate_route`
 - **Purpose:** Calculate a route between waypoints with specific costing models.
 - **Backend:** Valhalla.
-- **Input Schema:** `{ "locations": [{ "lat": number, "lon": number }], "costing": "auto|pedestrian|bicycle", "options": { "toll": number } }`
-- **Output Schema:** `{ "distance": number, "time": number, "geometry": "string (polyline)", "legs": [...] }`
+- **Input Schema:** `{ "locations": [{ "lat": number, "lon": number, "name": "string" }], "mode": "auto|pedestrian|bicycle", "avoid_tolls": boolean, "avoid_highways": boolean }`
+- **Output Schema:** `{ "distanceKm": number, "durationMinutes": number, "geometry": { "type": "LineString", "coordinates": [...] }, "legs": [...], "maneuvers": [...] }`
 
 ### `compare_routes`
 - **Purpose:** Request multiple route alternatives (e.g., fastest vs. toll-free) for comparison.
@@ -137,7 +137,7 @@ interface GeocodeProvider {
   search(query: string): Promise<Location[]>;
 }
 interface RoutingProvider {
-  getRoute(request: RouteRequest): Promise<RouteResult>;
+  calculateRoute(request: RouteRequest): Promise<RouteResult>;
 }
 ```
 

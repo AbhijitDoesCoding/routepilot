@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { healthCheckDefinition, healthCheckHandler } from "./tools/health.js";
 import { geocodeDefinition, geocodeHandler } from "./tools/geocode.js";
+import { calculateRouteDefinition, calculateRouteHandler } from "./tools/calculate_route.js";
 
 export const createServer = () => {
   const server = new McpServer({
@@ -24,6 +25,15 @@ export const createServer = () => {
       inputSchema: geocodeDefinition.parameters,
     },
     geocodeHandler
+  );
+
+  server.registerTool(
+    calculateRouteDefinition.name,
+    {
+      description: calculateRouteDefinition.description,
+      inputSchema: calculateRouteDefinition.parameters,
+    },
+    calculateRouteHandler
   );
 
   return server;
