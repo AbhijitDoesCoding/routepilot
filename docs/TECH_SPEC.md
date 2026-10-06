@@ -213,7 +213,8 @@ Local development is the primary focus first to keep things simple. AWS deployme
 RoutePilot's core Alexa+ implementation is a self-hosted MCP server implementing MCP 2025-11-25+ over Streamable HTTP. Our own web simulator will demonstrate the conversational Alexa+ experience. The `TravelPlan` remains a structured canonical object that can later be adapted to other presentation formats. We do not claim actual Alexa+ device/runtime integration (or APL) unless it is implemented, and there is no strict requirement for a `/alexa` backend endpoint initially.
 
 ## 30. Web Simulator Architecture
-A React SPA that polls or connects via WebSocket to the backend to receive streaming LLM text and structured `TravelPlan` updates concurrently.
+A React + Vite + Tailwind SPA that communicates with the backend via the `POST /api/chat` endpoint. It leverages a custom hook `useRoutePilot` to maintain conversation messages and the active `TravelPlan`. `MapLibre GL JS` is used as the frontend map renderer, initialized with a configurable `VITE_MAP_STYLE_URL` (defaulting to OpenFreeMap Liberty for OpenStreetMap styling).
+The frontend strictly renders the `AgentResponse` and does no constraint evaluation, geometry decoding (backend returns GeoJSON directly), or ETA calculation.
 
 ## 31. API/MCP Examples
 **User:** "Find a route from Central Park to Times Square avoiding tolls."
