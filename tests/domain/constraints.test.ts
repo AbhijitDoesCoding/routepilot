@@ -44,20 +44,76 @@ describe("ConstraintEngine", () => {
     assert.ok(evaluation.score >= 50); // Soft violation penalty applied
   });
 
-  test("should handle missing walking metadata gracefully", () => {
+  test("should invalidate route if hard constraint is NOT_EVALUABLE", () => {
     const candidate = createMockCandidate({}); // No walkingDistanceMeters
     const evaluation = engine.evaluate(candidate, [{ type: "max_walking_distance", severity: "hard", value: 500 }]);
     
+    assert.strictEqual(evaluation.valid, false); // Must be proven satisfied for hard constraints
+    assert.strictEqual(evaluation.notEvaluableConstraints[0], "max_walking_distance");
+  });
+
+  test("should apply penalty if soft constraint is NOT_EVALUABLE but remain valid", () => {
+    const candidate = createMockCandidate({});
+    const evaluation = engine.evaluate(candidate, [{ type: "max_walking_distance", severity: "soft", value: 500 }]);
+    
     assert.strictEqual(evaluation.valid, true);
-    assert.strictEqual(evaluation.violatedConstraints.length, 0);
-    assert.strictEqual(evaluation.satisfiedConstraints.length, 0); // Not evaluated
+    assert.strictEqual(evaluation.notEvaluableConstraints[0], "max_walking_distance");
+    assert.ok(evaluation.score > 15); // NOT_EVALUABLE_SOFT_PENALTY applied
+  });
+
+  test("should validate exactly threshold walking distance", () => {
+    const candidate = createMockCandidate({ walkingDistanceMeters: 500 });
+    const evaluation = engine.evaluate(candidate, [{ type: "max_walking_distance", severity: "hard", value: 500 }]);
+    
+    assert.strictEqual(evaluation.valid, true);
+    assert.strictEqual(evaluation.satisfiedConstraints[0], "max_walking_distance");
   });
 
   test("should invalidate route violating max walking distance", () => {
-    const candidate = createMockCandidate({ walkingDistanceMeters: 600 });
+    const candidate = createMockCandidate({ walkingDistanceMeters: 501 });
     const evaluation = engine.evaluate(candidate, [{ type: "max_walking_distance", severity: "hard", value: 500 }]);
     
     assert.strictEqual(evaluation.valid, false);
+    assert.strictEqual(evaluation.violatedConstraints[0], "max_walking_distance");
+  });
+
+  test("should validate arrival_deadline before deadline", () => {
+    const candidate = createMockCandidate({ durationMinutes: 60 });
+    const departure = "2026-10-07T08:00:00Z";
+    const deadline = "2026-10-07T10:00:00Z";
+    
+    const evaluation = engine.evaluate(candidate, [{ type: "arrival_deadline", severity: "hard", value: deadline }], departure);
+    assert.strictEqual(evaluation.valid, true);
+    assert.strictEqual(evaluation.satisfiedConstraints[0], "arrival_deadline");
+  });
+
+  test("should validate arrival_deadline exactly at deadline", () => {
+    const candidate = createMockCandidate({ durationMinutes: 60 });
+    const departure = "2026-10-07T08:00:00Z";
+    const deadline = "2026-10-07T09:00:00Z";
+    
+    const evaluation = engine.evaluate(candidate, [{ type: "arrival_deadline", severity: "hard", value: deadline }], departure);
+    assert.strictEqual(evaluation.valid, true);
+    assert.strictEqual(evaluation.satisfiedConstraints[0], "arrival_deadline");
+  });
+
+  test("should invalidate arrival_deadline after deadline", () => {
+    const candidate = createMockCandidate({ durationMinutes: 61 });
+    const departure = "2026-10-07T08:00:00Z";
+    const deadline = "2026-10-07T09:00:00Z";
+    
+    const evaluation = engine.evaluate(candidate, [{ type: "arrival_deadline", severity: "hard", value: deadline }], departure);
+    assert.strictEqual(evaluation.valid, false);
+    assert.strictEqual(evaluation.violatedConstraints[0], "arrival_deadline");
+  });
+
+  test("should invalidate missing departure for hard arrival_deadline", () => {
+    const candidate = createMockCandidate({ durationMinutes: 60 });
+    const deadline = "2026-10-07T10:00:00Z";
+    
+    const evaluation = engine.evaluate(candidate, [{ type: "arrival_deadline", severity: "hard", value: deadline }]); // missing departure
+    assert.strictEqual(evaluation.valid, false);
+    assert.strictEqual(evaluation.notEvaluableConstraints[0], "arrival_deadline");
   });
 
   test("rank should rank valid routes by score", () => {
@@ -102,5 +158,19 @@ describe("TimeUtils", () => {
     const deadline = "2026-10-07T09:00:00Z";
     const buffer = TimeUtils.calculateBuffer(arr, deadline);
     assert.strictEqual(buffer, 15);
+  });
+  
+  test("calculateBuffer negative", () => {
+    const arr = "2026-10-07T09:15:00Z";
+    const deadline = "2026-10-07T09:00:00Z";
+    const buffer = TimeUtils.calculateBuffer(arr, deadline);
+    assert.strictEqual(buffer, -15);
+  });
+  
+  test("calculateBuffer zero", () => {
+    const arr = "2026-10-07T09:00:00Z";
+    const deadline = "2026-10-07T09:00:00Z";
+    const buffer = TimeUtils.calculateBuffer(arr, deadline);
+    assert.strictEqual(buffer, 0);
   });
 });

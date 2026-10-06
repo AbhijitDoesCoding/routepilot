@@ -17,19 +17,21 @@ export const compareRoutesDefinition = {
       })
     ).min(2).describe("Waypoints to route between"),
     mode: z.enum(["auto", "pedestrian", "bicycle"]).default("auto").describe("Transport mode"),
+    departure_time: z.string().datetime({ offset: true }).optional().describe("ISO-8601 departure time (required to evaluate arrival_deadline)"),
     constraints: z.array(
-      z.object({
-        type: z.enum(["avoid_tolls", "avoid_highways", "max_walking_distance", "arrival_deadline"]),
-        severity: z.enum(["hard", "soft"]),
-        value: z.any().optional()
-      })
+      z.discriminatedUnion("type", [
+        z.object({ type: z.literal("avoid_tolls"), severity: z.enum(["hard", "soft"]) }),
+        z.object({ type: z.literal("avoid_highways"), severity: z.enum(["hard", "soft"]) }),
+        z.object({ type: z.literal("max_walking_distance"), severity: z.enum(["hard", "soft"]), value: z.number().positive() }),
+        z.object({ type: z.literal("arrival_deadline"), severity: z.enum(["hard", "soft"]), value: z.string().datetime({ offset: true }) })
+      ])
     ).optional().default([]).describe("Hard or soft constraints to evaluate candidates against")
   })
 };
 
 export const compareRoutesHandler = async (args: any) => {
   try {
-    const { locations, mode, constraints } = args;
+    const { locations, mode, departure_time, constraints } = args;
     const typedConstraints = constraints as RouteConstraint[];
 
     // Generate candidates by varying profiles if applicable
@@ -42,20 +44,37 @@ export const compareRoutesHandler = async (args: any) => {
         .catch(err => { console.error("Fastest failed:", err); return null; })
     );
 
-    // Profile 2: Toll-averse (if mode is auto)
+    // If mode is auto, we can explore constraint-driven alternate costings
     if (mode === "auto") {
-      candidatePromises.push(
-        provider.calculateRoute({ locations, mode, avoidTolls: true, avoidHighways: false })
-          .then(res => ({ ...res, candidateId: "no-tolls", costingProfile: "avoid_tolls" }))
-          .catch(() => null) // ignore if failing
-      );
+      const avoidTollsRelevant = typedConstraints.some(c => c.type === "avoid_tolls");
+      const avoidHighwaysRelevant = typedConstraints.some(c => c.type === "avoid_highways");
+
+      // Profile 2: Toll-averse
+      if (avoidTollsRelevant) {
+        candidatePromises.push(
+          provider.calculateRoute({ locations, mode, avoidTolls: true, avoidHighways: false })
+            .then(res => ({ ...res, candidateId: "no-tolls", costingProfile: "avoid_tolls" }))
+            .catch(() => null)
+        );
+      }
       
       // Profile 3: Highway-averse
-      candidatePromises.push(
-        provider.calculateRoute({ locations, mode, avoidTolls: false, avoidHighways: true })
-          .then(res => ({ ...res, candidateId: "no-highways", costingProfile: "avoid_highways" }))
-          .catch(() => null)
-      );
+      if (avoidHighwaysRelevant) {
+        candidatePromises.push(
+          provider.calculateRoute({ locations, mode, avoidTolls: false, avoidHighways: true })
+            .then(res => ({ ...res, candidateId: "no-highways", costingProfile: "avoid_highways" }))
+            .catch(() => null)
+        );
+      }
+
+      // Profile 4: Toll and Highway averse combined
+      if (avoidTollsRelevant && avoidHighwaysRelevant) {
+        candidatePromises.push(
+          provider.calculateRoute({ locations, mode, avoidTolls: true, avoidHighways: true })
+            .then(res => ({ ...res, candidateId: "no-tolls-no-highways", costingProfile: "avoid_tolls_and_highways" }))
+            .catch(() => null)
+        );
+      }
     }
 
     // Wait for all to finish
@@ -81,7 +100,7 @@ export const compareRoutesHandler = async (args: any) => {
     }
 
     // Evaluate candidates
-    const evaluations = candidates.map(c => engine.evaluate(c, typedConstraints));
+    const evaluations = candidates.map(c => engine.evaluate(c, typedConstraints, departure_time));
 
     // Rank candidates
     const ranking = engine.rank(evaluations);

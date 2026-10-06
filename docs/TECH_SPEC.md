@@ -75,19 +75,22 @@ Provider implementations
 
 ## 6. ConstraintEngine & Route Evaluation
 To shield the LLM from arithmetic and arbitrary path evaluation, a deterministic `ConstraintEngine` performs route evaluations.
-- **Hard Constraints:** Eliminate a route if violated (e.g. `severity: "hard"` for `avoid_tolls`).
-- **Soft Preferences:** Penalize a route's ranking score without eliminating it.
+- **Statuses:** `satisfied`, `violated`, `not_evaluable`.
+- **Hard Constraints:** Eliminate a route if violated (`valid = false`). If a hard constraint is `not_evaluable` (e.g. missing metadata), the route is also invalidated since it cannot be proven safe.
+- **Soft Preferences:** Penalize a route's ranking score without eliminating it. A `not_evaluable` soft constraint incurs a small penalty.
 - **Deterministic Scoring:** Lower score is better. `score = (duration * 1.0) + (distance * 0.5) + (soft_penalties)`.
-- **TimeUtils:** Deterministically calculates ETAs, required departure times, and buffers using ISO-8601 mathematics to avoid string-manipulation errors inside LLM prompts.
+- **TimeUtils / Deadlines:** Deterministically calculates ETAs, required departure times, and buffers using ISO-8601 mathematics to evaluate `arrival_deadline`.
 
-## 6. Nominatim Integration
-Used strictly for geocoding. Wrapped in a `GeocodeProvider` interface. Rate limiting and user-agent requirements of the public API must be respected, or a dedicated instance/alternative (like Photon) must be used if traffic increases.
+## 6.1 Nominatim Integration
+Used strictly for geocoding. Wrapped in a `GeocodeProvider` interface. Rate limiting and user-agent requirements of the public API must be respected.
 
 ## 7. Valhalla Integration
-Used for routing. Wrapped in a `RoutingProvider` interface. Leverages Valhalla's flexible costing options (e.g., heavily penalizing tolls or highways) to fulfill user constraints dynamically.
+Used for routing. Wrapped in a `RoutingProvider` interface. Leverages Valhalla's flexible costing options (e.g., heavily penalizing tolls or highways) to generate diverse candidates. Valhalla preferences are NOT constraints; the `ConstraintEngine` independently verifies if the generated route actually has tolls or highways to determine constraint satisfaction.
 
 ## 8. MapLibre Integration
-The frontend uses MapLibre GL JS. The LLM provides the `TravelPlan` object containing polyline strings (from Valhalla). The frontend decodes these polylines and renders them as GeoJSON `LineString` features on the map, alongside markers for origin, destination, and stops.
+The frontend uses MapLibre GL JS. The actual geometry flow is:
+`Valhalla encoded shape -> ValhallaProvider -> GeoJSON LineString -> RouteResult -> future TravelPlan -> MapLibre`
+The frontend must NOT decode Valhalla's encoded polyline. It receives ready-to-use GeoJSON.
 
 ## 9. AI/Agent Architecture
 The agent uses a ReAct (Reasoning and Acting) or plan-and-execute loop via Amazon Bedrock. The architecture is model-agnostic; the model ID is configurable via an environment variable (`BEDROCK_MODEL_ID=...`) and the actual model will be selected after testing tool calling, quality, latency, and cost.
@@ -95,9 +98,8 @@ The agent uses a ReAct (Reasoning and Acting) or plan-and-execute loop via Amazo
 2. Update constraint model based on input.
 3. Determine required tools (e.g., `geocode` origin, `geocode` destination).
 4. Call tools.
-5. Call `calculate_route` with constraints.
-6. Evaluate results.
-7. Generate `TravelPlan` and conversational response.
+5. Call `compare_routes` with constraints.
+6. Generate `TravelPlan` and conversational response.
 
 ## 10. Bedrock Integration Strategy
 Use the AWS SDK for JavaScript to communicate with Amazon Bedrock. Utilize the `Converse` API, which natively supports tool use (function calling) and maintains conversation history.
@@ -110,33 +112,28 @@ interface TravelPlan {
   origin: { name: string; lat: number; lon: number };
   destination: { name: string; lat: number; lon: number };
   departureTime: string; // ISO8601
-  arrivalDeadline?: string; // ISO8601
   actualEta: string; // ISO8601
-  bufferMinutes: number;
   durationMinutes: number;
   distanceKm: number;
   transportMode: string;
-  routeGeometry: string; // Encoded polyline
+  routeGeometry: any; // GeoJSON LineString
   stops: Array<{ name: string; lat: number; lon: number; durationMinutes: number }>;
   warnings: string[];
 }
 ```
 
 ## 12. Constraint Model
-Parsed by the LLM from user input.
+Parsed by the LLM from user input and fed into `compare_routes`.
 ```typescript
-interface Constraints {
-  arrivalDeadline?: string;
-  earliestDeparture?: string;
-  avoidTolls: boolean;
-  avoidHighways: boolean;
-  maxWalkingDistanceMeters?: number;
-  requiredStops: string[]; // e.g., ["coffee shop"]
-}
+type RouteConstraint = 
+  | { type: "avoid_tolls"; severity: "hard" | "soft" }
+  | { type: "avoid_highways"; severity: "hard" | "soft" }
+  | { type: "max_walking_distance"; severity: "hard" | "soft"; value: number }
+  | { type: "arrival_deadline"; severity: "hard" | "soft"; value: string };
 ```
 
 ## 13. Route Option Model
-The parameters sent to Valhalla based on the `Constraints`.
+The parameters sent to Valhalla based on the `Constraints`. `compare_routes` generates combined route candidates automatically when both toll and highway avoidance are requested.
 
 ## 14. Provider Abstraction Design
 ```typescript
@@ -151,7 +148,7 @@ interface RoutingProvider {
 ## 15. TrafficProvider Abstraction
 ```typescript
 interface TrafficProvider {
-  getDelayEstimate(routeGeometry: string, time: Date): Promise<number>;
+  getDelayEstimate(routeGeometry: any, time: Date): Promise<number>;
 }
 ```
 *Note: Implemented as an abstraction initially. Do not add fake traffic values. Real-time traffic requires a legitimate external traffic data provider and will be added only when available and legally usable.*
@@ -161,7 +158,7 @@ interface TrafficProvider {
 - **WeatherProvider / CalendarProvider:** Abstract interfaces for future implementation.
 
 ## 19. Conversation/Session State
-Maintained in memory (or a lightweight local DB for development) per user/session ID. Includes the chat history, the current `Constraints` object, and the active `TravelPlan`.
+Maintained in memory (or a lightweight local DB for development) per user/session ID. Includes the chat history, the current constraints, and the active `TravelPlan`.
 
 ## 20. Error Handling
 - **LLM Tool Errors:** MCP server returns error strings; LLM is prompted to retry or ask user for clarification.
@@ -175,7 +172,7 @@ Maintained in memory (or a lightweight local DB for development) per user/sessio
 Pino for structured logging. Log LLM prompts, tool calls, and latencies. Do not log PII (user addresses) in production logs.
 
 ## 23. Testing Strategy
-- **Unit:** Jest/Vitest for Provider logic, parsing, and the Constraint Engine.
+- **Unit:** node:test for Provider logic, parsing, and the Constraint Engine.
 - **Integration:** Test MCP tools against mock geospatial APIs.
 - **E2E:** Playwright for the frontend flow.
 
@@ -207,7 +204,7 @@ A React SPA that polls or connects via WebSocket to the backend to receive strea
 
 ## 31. API/MCP Examples
 **User:** "Find a route from Central Park to Times Square avoiding tolls."
-**Agent calls:** `calculate_route({ locations: [Central Park coords, Times Square coords], options: { toll: 0 } })`
+**Agent calls:** `compare_routes({ locations: [Central Park coords, Times Square coords], constraints: [{ type: "avoid_tolls", severity: "hard" }] })`
 
 ## 32. Example Tool Calls
 See Section 5.

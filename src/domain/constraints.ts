@@ -1,19 +1,31 @@
 import { RouteResult } from "../providers/routing/types.js";
 
-export type ConstraintType = "avoid_tolls" | "avoid_highways" | "max_walking_distance";
+export type ConstraintType = "avoid_tolls" | "avoid_highways" | "max_walking_distance" | "arrival_deadline";
+export type Severity = "hard" | "soft";
 
-export interface RouteConstraint {
+export type RouteConstraint = 
+  | { type: "avoid_tolls"; severity: Severity }
+  | { type: "avoid_highways"; severity: Severity }
+  | { type: "max_walking_distance"; severity: Severity; value: number }
+  | { type: "arrival_deadline"; severity: Severity; value: string };
+
+export type EvaluationStatus = "satisfied" | "violated" | "not_evaluable";
+
+export interface ConstraintEvaluation {
   type: ConstraintType;
-  severity: "hard" | "soft";
-  value?: any;
+  severity: Severity;
+  status: EvaluationStatus;
+  reason?: string;
 }
 
 export interface RouteEvaluation {
   route: RouteCandidate;
   valid: boolean;
-  violatedConstraints: ConstraintType[];
-  satisfiedConstraints: ConstraintType[];
   score: number;
+  constraintEvaluations: ConstraintEvaluation[];
+  violatedConstraints: ConstraintType[];
+  notEvaluableConstraints: ConstraintType[];
+  satisfiedConstraints: ConstraintType[];
   explanation: string;
 }
 
@@ -23,71 +35,121 @@ export interface RouteCandidate extends RouteResult {
 }
 
 export class ConstraintEngine {
-  /**
-   * Deterministic score weights.
-   * Lower score is better.
-   */
   private static DURATION_WEIGHT = 1.0;
   private static DISTANCE_WEIGHT = 0.5;
   private static SOFT_VIOLATION_PENALTY = 50.0;
+  private static NOT_EVALUABLE_SOFT_PENALTY = 20.0;
 
-  public evaluate(candidate: RouteCandidate, constraints: RouteConstraint[]): RouteEvaluation {
+  /**
+   * Evaluate a route candidate against constraints.
+   * @param candidate The route to evaluate.
+   * @param constraints Array of constraints.
+   * @param departureTimeIso Optional departure time needed for time-based evaluations.
+   */
+  public evaluate(
+    candidate: RouteCandidate, 
+    constraints: RouteConstraint[],
+    departureTimeIso?: string
+  ): RouteEvaluation {
     let valid = true;
+    const constraintEvaluations: ConstraintEvaluation[] = [];
     const violated: ConstraintType[] = [];
     const satisfied: ConstraintType[] = [];
+    const notEvaluable: ConstraintType[] = [];
     let softPenalties = 0;
 
     for (const constraint of constraints) {
-      let isViolated = false;
-      let evaluable = true;
+      let status: EvaluationStatus = "not_evaluable";
+      let reason: string | undefined;
 
       switch (constraint.type) {
         case "avoid_tolls":
-          if (candidate.hasToll) {
-            isViolated = true;
-          }
+          status = candidate.hasToll ? "violated" : "satisfied";
+          reason = candidate.hasToll ? "Route contains tolls" : "No tolls on route";
           break;
+
         case "avoid_highways":
-          if (candidate.hasHighway) {
-            isViolated = true;
-          }
+          status = candidate.hasHighway ? "violated" : "satisfied";
+          reason = candidate.hasHighway ? "Route uses highways" : "No highways on route";
           break;
+
         case "max_walking_distance":
           if (typeof candidate.walkingDistanceMeters === "number") {
-            if (candidate.walkingDistanceMeters > (constraint.value as number)) {
-              isViolated = true;
+            if (candidate.walkingDistanceMeters > constraint.value) {
+              status = "violated";
+              reason = `Walking distance (${Math.round(candidate.walkingDistanceMeters)}m) exceeds maximum (${constraint.value}m)`;
+            } else {
+              status = "satisfied";
+              reason = `Walking distance (${Math.round(candidate.walkingDistanceMeters)}m) is within limit`;
             }
           } else {
-            evaluable = false;
+            status = "not_evaluable";
+            reason = "Walking distance metadata unavailable for this route";
+          }
+          break;
+
+        case "arrival_deadline":
+          if (departureTimeIso) {
+            const arrival = TimeUtils.calculateArrivalTime(departureTimeIso, candidate.durationMinutes);
+            const buffer = TimeUtils.calculateBuffer(arrival, constraint.value);
+            if (buffer < 0) {
+              status = "violated";
+              reason = `Arrives ${Math.abs(Math.round(buffer))} minutes late`;
+            } else {
+              status = "satisfied";
+              reason = `Arrives ${Math.round(buffer)} minutes before deadline`;
+            }
+          } else {
+            status = "not_evaluable";
+            reason = "Departure time is unknown; cannot compute arrival time";
           }
           break;
       }
 
-      if (evaluable) {
-        if (isViolated) {
-          violated.push(constraint.type);
-          if (constraint.severity === "hard") {
-            valid = false;
-          } else {
-            softPenalties += ConstraintEngine.SOFT_VIOLATION_PENALTY;
-          }
+      constraintEvaluations.push({
+        type: constraint.type,
+        severity: constraint.severity,
+        status,
+        reason
+      });
+
+      if (status === "violated") {
+        violated.push(constraint.type);
+        if (constraint.severity === "hard") {
+          valid = false;
         } else {
-          satisfied.push(constraint.type);
+          softPenalties += ConstraintEngine.SOFT_VIOLATION_PENALTY;
         }
+      } else if (status === "not_evaluable") {
+        notEvaluable.push(constraint.type);
+        if (constraint.severity === "hard") {
+          valid = false; // Hard constraint must be proven satisfied
+        } else {
+          softPenalties += ConstraintEngine.NOT_EVALUABLE_SOFT_PENALTY;
+        }
+      } else {
+        satisfied.push(constraint.type);
       }
     }
 
-    // Score = duration + (distance * weight) + soft penalties
     const score = (candidate.durationMinutes * ConstraintEngine.DURATION_WEIGHT) +
                   (candidate.distanceKm * ConstraintEngine.DISTANCE_WEIGHT) +
                   softPenalties;
 
     const explanationParts = [];
     if (!valid) {
-      explanationParts.push(`Invalid: violates hard constraints (${violated.filter(v => constraints.find(c => c.type === v)?.severity === 'hard').join(', ')}).`);
+      const invalidReasons = [];
+      if (violated.some(v => constraints.find(c => c.type === v)?.severity === "hard")) {
+        invalidReasons.push(`violates hard constraints (${violated.filter(v => constraints.find(c => c.type === v)?.severity === 'hard').join(', ')})`);
+      }
+      if (notEvaluable.some(v => constraints.find(c => c.type === v)?.severity === "hard")) {
+        invalidReasons.push(`cannot evaluate hard constraints (${notEvaluable.filter(v => constraints.find(c => c.type === v)?.severity === 'hard').join(', ')})`);
+      }
+      explanationParts.push(`Invalid: ${invalidReasons.join(" and ")}.`);
     } else {
       explanationParts.push("Valid route.");
     }
+    
     if (violated.length > 0) {
       explanationParts.push(`Violated: ${violated.join(', ')}.`);
     }
@@ -95,9 +157,11 @@ export class ConstraintEngine {
     return {
       route: candidate,
       valid,
-      violatedConstraints: violated,
-      satisfiedConstraints: satisfied,
       score,
+      constraintEvaluations,
+      violatedConstraints: violated,
+      notEvaluableConstraints: notEvaluable,
+      satisfiedConstraints: satisfied,
       explanation: explanationParts.join(" ")
     };
   }

@@ -2,9 +2,9 @@
 
 RoutePilot is a conversational travel-planning and decision-making agent designed for the "Build, Ship, Shape: Amazon Developer Hackathon 2026". Instead of requiring manual travel configurations, users can state their travel goals in natural language, and RoutePilot manages constraints and evaluates deterministic route options to recommend the best plan.
 
-## Current Phase: Phase 4 (Route Comparison and Constraints)
+## Current Phase: Phase 4.1 (Constraint Hardening)
 
-We are currently at **Phase 4**, which introduces deterministic constraint evaluation and the `compare_routes` tool.
+We are currently at **Phase 4.1**, which hardens deterministic constraint evaluation, introduces deadline math, NOT_EVALUABLE semantics, and combined route generation in the `compare_routes` tool.
 
 *Note: AI agent logic, map visualization (MapLibre), live traffic, weather, and the conversational frontend are **future phases** and are not yet implemented. This system does NOT currently provide live or Google-style traffic data.*
 

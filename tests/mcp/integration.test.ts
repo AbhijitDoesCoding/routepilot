@@ -242,4 +242,108 @@ describe("MCP Server Integration", () => {
     assert.strictEqual(invalidAlt.valid, false);
     assert.ok(invalidAlt.violatedConstraints.includes("avoid_tolls"));
   });
+
+  test("should generate combined candidate when both avoid_tolls and avoid_highways are required", async () => {
+    let requestsCount = 0;
+    const originalFetch = globalThis.fetch;
+    mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const urlString = input.toString();
+      if (urlString.includes("route")) {
+        requestsCount++;
+        const body = JSON.parse((init?.body as string) || "{}");
+        const isTollAverse = body.costing_options?.auto?.use_tolls === 0;
+        const isHighwayAverse = body.costing_options?.auto?.use_highways === 0;
+        
+        let length = 25;
+        let time = 2400;
+        
+        if (isTollAverse && isHighwayAverse) {
+           length = 50; time = 5000;
+        } else if (isTollAverse) {
+           length = 30; time = 3000;
+        } else if (isHighwayAverse) {
+           length = 40; time = 4000;
+        }
+
+        return new Response(
+          JSON.stringify({
+            trip: {
+              summary: { 
+                length, 
+                time,
+                has_toll: !isTollAverse,
+                has_highway: !isHighwayAverse
+              },
+              legs: [
+                {
+                  shape: "_p~iF~ps|U",
+                  summary: { length, time },
+                  maneuvers: []
+                }
+              ]
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      return originalFetch(input, init);
+    });
+
+    const result = await client.callTool({
+      name: "compare_routes",
+      arguments: { 
+        locations: [{ lat: 10, lon: 10 }, { lat: 20, lon: 20 }],
+        mode: "auto",
+        constraints: [
+          { type: "avoid_tolls", severity: "hard" },
+          { type: "avoid_highways", severity: "hard" }
+        ]
+      }
+    });
+
+    assert.strictEqual(requestsCount, 4); // default, toll, highway, combined
+
+    const data = JSON.parse((result.content[0] as any).text);
+    assert.strictEqual(data.feasible, true);
+    assert.strictEqual(data.recommended.route.candidateId, "no-tolls-no-highways");
+    assert.strictEqual(data.recommended.valid, true);
+    
+    // Alternatives should include the ones that failed
+    const failedToll = data.alternatives.find((a: any) => a.route.candidateId === "fastest");
+    assert.ok(failedToll);
+    assert.strictEqual(failedToll.valid, false);
+  });
+
+  test("should reject malformed constraints due to strict typing", async () => {
+    const result = await client.callTool({
+      name: "compare_routes",
+      arguments: { 
+        locations: [{ lat: 10, lon: 10 }, { lat: 20, lon: 20 }],
+        mode: "auto",
+        constraints: [
+          { type: "max_walking_distance", severity: "hard", value: "five hundred" } // Should be number
+        ]
+      }
+    });
+
+    assert.strictEqual(result.isError, true);
+    const content = result.content[0] as any;
+    assert.ok(content.text.includes("Invalid input") || content.text.toLowerCase().includes("invalid") || content.text.includes("five hundred") || content.text.includes("Expected"));
+  });
+
+  test("should reject missing required value for arrival_deadline", async () => {
+    const result = await client.callTool({
+      name: "compare_routes",
+      arguments: { 
+        locations: [{ lat: 10, lon: 10 }, { lat: 20, lon: 20 }],
+        mode: "auto",
+        constraints: [
+          { type: "arrival_deadline", severity: "hard" } // Missing value
+        ]
+      }
+    });
+
+    assert.strictEqual(result.isError, true);
+  });
+
 });
