@@ -4,7 +4,7 @@
 RoutePilot follows a modular monolith architecture for initial development, separating the AI decision layer from deterministic geospatial services. 
 - **Frontend:** A React-based web application containing a chat interface and MapLibre GL JS map.
 - **Backend (Agent API):** Node.js/TypeScript application handling session state and interfacing with Amazon Bedrock.
-- **MCP Server:** A separate Node.js process exposing geospatial tools via the Model Context Protocol (MCP) using stdio or SSE.
+- **MCP Server:** A separate Node.js process exposing geospatial tools via the Model Context Protocol (MCP) using Streamable HTTP on a `/mcp` endpoint (specification minimum: 2025-11-25) and the current official MCP TypeScript SDK. (stdio may be used optionally for local testing).
 - **Geospatial Services:** External APIs (Nominatim, Valhalla) abstracted behind provider interfaces.
 
 ## 2. Component Architecture
@@ -34,8 +34,24 @@ routepilot/
 └── .env.example
 ```
 
-## 4. MCP Architecture
-The MCP Server acts as the bridge between the LLM and the real world. It implements the official MCP TypeScript SDK. The agent uses the `call_tool` capability to request geocoding, routing, or place information. The tools are designed to return structured JSON that the LLM can easily interpret and use in its reasoning loop.
+## 4. MCP Architecture & Domain Separation
+The MCP Server acts as the standardized tool boundary between the LLM and the real world. The agent NEVER directly calls Nominatim or Valhalla; it only communicates through the MCP interface. The explicit interaction flow is:
+```text
+Frontend / simulator
+    ↓
+Agent API
+    ↓
+Bedrock Converse/tool-use loop
+    ↓
+MCP Client
+    ↓
+RoutePilot MCP Server
+    ↓
+Provider implementations
+    ├── Nominatim
+    └── Valhalla
+```
+**Domain Separation:** The LLM extracts user intent and orchestrates tool calls. The Provider adapters communicate with external deterministic services. The domain/constraint logic (outside the LLM) explicitly evaluates the resulting routes. The LLM must not perform deterministic calculations itself.
 
 ## 5. MCP Tools and Schemas
 
@@ -67,7 +83,7 @@ Used for routing. Wrapped in a `RoutingProvider` interface. Leverages Valhalla's
 The frontend uses MapLibre GL JS. The LLM provides the `TravelPlan` object containing polyline strings (from Valhalla). The frontend decodes these polylines and renders them as GeoJSON `LineString` features on the map, alongside markers for origin, destination, and stops.
 
 ## 9. AI/Agent Architecture
-The agent uses a ReAct (Reasoning and Acting) or plan-and-execute loop via Amazon Bedrock (Claude 3.5 Sonnet). 
+The agent uses a ReAct (Reasoning and Acting) or plan-and-execute loop via Amazon Bedrock. The architecture is model-agnostic; the model ID is configurable via an environment variable (`BEDROCK_MODEL_ID=...`) and the actual model will be selected after testing tool calling, quality, latency, and cost.
 1. Receive user input.
 2. Update constraint model based on input.
 3. Determine required tools (e.g., `geocode` origin, `geocode` destination).
@@ -131,7 +147,7 @@ interface TrafficProvider {
   getDelayEstimate(routeGeometry: string, time: Date): Promise<number>;
 }
 ```
-*Note: Implemented as a mock or null provider initially. Do not fake traffic data.*
+*Note: Implemented as an abstraction initially. Do not add fake traffic values. Real-time traffic requires a legitimate external traffic data provider and will be added only when available and legally usable.*
 
 ## 16-18. Other Providers
 - **PlacesProvider:** For finding POIs along a route (e.g., "coffee shop"). Could use Nominatim or Overpass API.
@@ -174,12 +190,10 @@ PORT=3000
 Use `npm run dev` to start the frontend, backend, and MCP server concurrently using something like `concurrently` or Turborepo.
 
 ## 27-28. Deployment & AWS Architecture
-For the hackathon, deploy via AWS CDK or SAM.
-- **Frontend:** AWS Amplify or S3+CloudFront.
-- **Backend/MCP:** AWS Lambda function URL or API Gateway.
+Local development is the primary focus first to keep things simple. AWS deployment (e.g., via AWS CDK or SAM) is a future hackathon deployment option. We will use AWS services only when they have a concrete role.
 
 ## 29. Alexa+ Integration
-The backend API exposes a specific endpoint `/alexa` that accepts standard Alexa intents. It maps the intent to the conversational session, generates the response, and formats the `TravelPlan` into an APL directive.
+RoutePilot's core Alexa+ implementation is a self-hosted MCP server implementing MCP 2025-11-25+ over Streamable HTTP. Our own web simulator will demonstrate the conversational Alexa+ experience. The `TravelPlan` remains a structured canonical object that can later be adapted to other presentation formats. We do not claim actual Alexa+ device/runtime integration (or APL) unless it is implemented, and there is no strict requirement for a `/alexa` backend endpoint initially.
 
 ## 30. Web Simulator Architecture
 A React SPA that polls or connects via WebSocket to the backend to receive streaming LLM text and structured `TravelPlan` updates concurrently.

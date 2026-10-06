@@ -123,11 +123,11 @@ The agent must remember the current `TravelPlan` and constraints. When the user 
 The system will expose geospatial capabilities to the LLM via the Model Context Protocol (MCP). The MCP server will be strictly typed, using the official MCP TypeScript SDK. The LLM will use these tools to fetch data deterministically.
 
 ## 20. Alexa+ Integration Strategy
-The agent's conversational core must be designed so the text-based responses can be piped to Alexa TTS (Text-to-Speech), and the structured `TravelPlan` can power Alexa APL (Alexa Presentation Language) visual cards. The hackathon entry will demonstrate this capability.
+RoutePilot's core Alexa+ implementation is a self-hosted MCP server over Streamable HTTP. Our own web simulator/frontend will demonstrate the conversational Alexa+ experience. The `TravelPlan` remains a structured canonical object that can later be adapted to other presentation formats (like Alexa APL). We do not claim actual Alexa+ device/runtime integration unless it is fully implemented.
 
 ## 21. AWS/Bedrock Strategy
-- **Core AI:** Amazon Bedrock for foundation models (Claude 3.5 Sonnet or similar) for intent extraction, tool calling, and response generation.
-- **Hosting:** AWS Lambda for serverless execution of the MCP server and API endpoints.
+- **Core AI:** Amazon Bedrock as the model provider. The architecture is model-agnostic. The actual model is selected after testing tool calling, quality, latency, and cost, and its ID is configurable via an environment variable (e.g., `BEDROCK_MODEL_ID=...`).
+- **Hosting:** Local development is the primary focus first. AWS deployment (e.g., AWS Lambda, API Gateway) is a future hackathon deployment option to be used only when services have a concrete role.
 - **Future:** DynamoDB for session state if required. No unnecessary services will be added.
 
 ## 22. Open Source Strategy
@@ -146,13 +146,14 @@ The project leverages MapLibre, Nominatim, and Valhalla. The owner has a history
 - Successfully integrates the Open Geospatial stack with Amazon Bedrock via MCP.
 
 ## 25. Hackathon Judging Strategy
-- **Alexa+ Track:** Demonstrate conversational excellence, multi-turn context, and structured output suitable for voice/display interfaces.
-- **AWS Builder:** Highlight the use of Amazon Bedrock and serverless AWS architecture.
+- **Alexa+ Track:** RoutePilot's intended primary path for Alexa+ eligibility is a "Self-hosted MCP server implementing MCP 2025-11-25+ over Streamable HTTP." A custom web simulator is used for the demo experience. We do not claim the gated Alexa+ developer toolkit, CLI, MCP Toolkit, or Web Simulator is available to us.
+- **AWS Builder:** Highlight the use of Amazon Bedrock and serverless AWS architecture when deployed.
 - **Open Source:** Clearly document the *new* OSS contribution made during the hackathon, distinct from past contributions.
 
 ## 26. Future Roadmap
 - Phase 0: PRD & Tech Spec (Current)
 - Phase 1: MCP Foundation
+  - Acceptance Criteria: Uses current MCP SDK v2, Streamable HTTP, `/mcp` endpoint, MCP initialization succeeds, `health_check` tool is discoverable and callable through an MCP client, protocol version compatibility is verified.
 - Phase 2-4: Core Geospatial (Nominatim, Valhalla, Constraints)
 - Phase 5: Agent/Bedrock Integration
 - Phase 6-7: MapLibre UI & Multi-turn UX
