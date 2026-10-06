@@ -1,4 +1,4 @@
-import { test, describe, before, after } from "node:test";
+import { test, describe, before, after, mock, beforeEach, afterEach } from "node:test";
 import * as assert from "node:assert";
 import { createServer as createHttpServer } from "node:http";
 import { Readable } from "node:stream";
@@ -7,7 +7,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { createServer } from "../../src/mcp/server.js";
 
-describe("MCP Health Check Integration", () => {
+describe("MCP Server Integration", () => {
   let server: any;
   let client: Client;
   let transport: StreamableHTTPClientTransport;
@@ -66,10 +66,17 @@ describe("MCP Health Check Integration", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  test("should discover health_check tool", async () => {
+  afterEach(() => {
+    mock.restoreAll();
+  });
+
+  test("should discover health_check and geocode tools", async () => {
     const tools = await client.listTools();
     const healthTool = tools.tools.find((t) => t.name === "health_check");
+    const geocodeTool = tools.tools.find((t) => t.name === "geocode");
+    
     assert.ok(healthTool, "health_check tool should be present");
+    assert.ok(geocodeTool, "geocode tool should be present");
   });
 
   test("should call health_check tool", async () => {
@@ -87,5 +94,41 @@ describe("MCP Health Check Integration", () => {
     assert.strictEqual(data.service, "RoutePilot MCP");
     assert.strictEqual(data.version, "0.1.0");
     assert.ok(data.timestamp);
+  });
+
+  test("should call geocode tool with mock data", async () => {
+    const originalFetch = globalThis.fetch;
+    mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const urlString = input.toString();
+      if (urlString.includes("nominatim")) {
+        return new Response(
+          JSON.stringify([
+            {
+              lat: "18.5793",
+              lon: "73.9089",
+              display_name: "Pune Airport",
+            },
+          ]),
+          { status: 200 }
+        );
+      }
+      return originalFetch(input, init);
+    });
+
+    const result = await client.callTool({
+      name: "geocode",
+      arguments: { query: "Pune Airport" }
+    });
+
+    assert.ok(result.content.length > 0);
+    const content = result.content[0];
+    assert.strictEqual(content.type, "text");
+
+    const data = JSON.parse(content.text);
+    assert.ok(data.results);
+    assert.strictEqual(data.results.length, 1);
+    assert.strictEqual(data.results[0].lat, 18.5793);
+    assert.strictEqual(data.results[0].lon, 73.9089);
+    assert.strictEqual(data.results[0].name, "Pune Airport");
   });
 });

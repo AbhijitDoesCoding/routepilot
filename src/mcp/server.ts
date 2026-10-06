@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { healthCheckDefinition, healthCheckHandler } from "./tools/health.js";
+import { geocodeDefinition, geocodeHandler } from "./tools/geocode.js";
 
 export const createServer = () => {
   const server = new McpServer({
@@ -8,25 +9,21 @@ export const createServer = () => {
   });
 
   server.registerTool(
-    "health_check",
+    healthCheckDefinition.name,
     {
-      description: "Check the health of the RoutePilot MCP server"
+      description: healthCheckDefinition.description,
+      inputSchema: healthCheckDefinition.parameters,
     },
-    async () => {
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              status: "ok",
-              service: "RoutePilot MCP",
-              version: "0.1.0",
-              timestamp: new Date().toISOString()
-            })
-          }
-        ]
-      };
-    }
+    healthCheckHandler
+  );
+
+  server.registerTool(
+    geocodeDefinition.name,
+    {
+      description: geocodeDefinition.description,
+      inputSchema: geocodeDefinition.parameters,
+    },
+    geocodeHandler
   );
 
   return server;
