@@ -21,7 +21,7 @@ describe("ValhallaProvider", () => {
             summary: { length: 15.5, time: 1800 },
             legs: [
               {
-                shape: "encoded_polyline_mock", // We can test decodePolyline separately or just expect errors if empty
+                shape: "_p~iF~ps|U_ulLnnqC_mqNvxq`@", // Known valid polyline 5 (will decode as valid length 6 garbage, but non-empty)
                 summary: { length: 15.5, time: 1800 },
                 maneuvers: [{ instruction: "Turn right" }]
               }
@@ -54,7 +54,7 @@ describe("ValhallaProvider", () => {
         JSON.stringify({
           trip: {
             summary: { length: 5, time: 600 },
-            legs: [{ shape: "shape" }]
+            legs: [{ shape: "_p~iF~ps|U", summary: { length: 5, time: 600 } }]
           }
         }),
         { status: 200 }
@@ -69,7 +69,7 @@ describe("ValhallaProvider", () => {
     });
 
     assert.strictEqual(requestedBody.costing, "auto");
-    assert.strictEqual(requestedBody.costing_options.auto.toll_penalty, 10000);
+    assert.strictEqual(requestedBody.costing_options.auto.use_tolls, 0);
     assert.strictEqual(requestedBody.costing_options.auto.use_highways, 0);
   });
 

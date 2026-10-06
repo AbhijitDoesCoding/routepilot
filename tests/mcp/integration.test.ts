@@ -145,7 +145,7 @@ describe("MCP Server Integration", () => {
               summary: { length: 25.5, time: 2400 },
               legs: [
                 {
-                  shape: "shape",
+                  shape: "_p~iF~ps|U",
                   summary: { length: 25.5, time: 2400 },
                   maneuvers: []
                 }
