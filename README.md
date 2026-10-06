@@ -2,11 +2,28 @@
 
 RoutePilot is a conversational travel-planning and decision-making agent designed for the "Build, Ship, Shape: Amazon Developer Hackathon 2026". Instead of requiring manual travel configurations, users can state their travel goals in natural language, and RoutePilot manages constraints and evaluates deterministic route options to recommend the best plan.
 
-## Current Phase: Phase 4.1 (Constraint Hardening)
+## Current Phase: Phase 5 (Bedrock Agent Integration)
 
-We are currently at **Phase 4.1**, which hardens deterministic constraint evaluation, introduces deadline math, NOT_EVALUABLE semantics, and combined route generation in the `compare_routes` tool.
+We are currently at **Phase 5**, which introduces Amazon Bedrock to act as the core conversational reasoning agent, interacting dynamically with our MCP tools via a native client loop.
 
-*Note: AI agent logic, map visualization (MapLibre), live traffic, weather, and the conversational frontend are **future phases** and are not yet implemented. This system does NOT currently provide live or Google-style traffic data.*
+*Note: Map visualization (MapLibre), live traffic, weather, and the conversational frontend are **future phases** and are not yet implemented. This system does NOT currently provide live or Google-style traffic data.*
+
+### Local Setup & Testing
+
+1. Ensure your `.env` contains:
+```env
+PORT=3000
+AWS_REGION=us-east-1
+BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
+DEFAULT_TIMEZONE=Asia/Kolkata
+```
+2. You must have active AWS credentials resolving in your environment (e.g. `~/.aws/credentials` or standard export vars) with Bedrock access.
+3. Start the MCP server: `npm run build && npm start`
+4. In a separate terminal, test the agent manually: `npx tsx scripts/test-agent.ts`
+
+**Example conversation:**
+> You: I need to reach Pune Airport by 7 AM and avoid tolls.
+> RoutePilot: [Calls geocode and compare_routes] ... Here's your plan.
 
 ### Architecture at this Stage
 

@@ -93,32 +93,39 @@ The frontend uses MapLibre GL JS. The actual geometry flow is:
 The frontend must NOT decode Valhalla's encoded polyline. It receives ready-to-use GeoJSON.
 
 ## 9. AI/Agent Architecture
-The agent uses a ReAct (Reasoning and Acting) or plan-and-execute loop via Amazon Bedrock. The architecture is model-agnostic; the model ID is configurable via an environment variable (`BEDROCK_MODEL_ID=...`) and the actual model will be selected after testing tool calling, quality, latency, and cost.
-1. Receive user input.
-2. Update constraint model based on input.
-3. Determine required tools (e.g., `geocode` origin, `geocode` destination).
-4. Call tools.
-5. Call `compare_routes` with constraints.
-6. Generate `TravelPlan` and conversational response.
+The agent uses a ReAct (Reasoning and Acting) converse loop via Amazon Bedrock (`BedrockAgent`). The architecture is model-agnostic; the model ID is configurable via `BEDROCK_MODEL_ID`.
+1. `AgentService` receives user input and maintains multi-turn context in a memory `SessionStore`.
+2. A deterministic `Clock` provides explicit `currentTime` and `timezone` to the system prompt.
+3. Bedrock plans tool usage based on extracted constraints.
+4. An `MCPClientService` routes tool requests through Streamable HTTP (`/mcp`) to the RoutePilot MCP Server.
+5. `compare_routes` resolves geometries, constraints, and deterministically calculates the latest departure deadline via `TimeUtils`.
+6. Tool outputs are natively appended back into the Converse loop to generate a final conversational response (`AgentResponse`).
+7. During the loop, `AgentService` intercepts structured tool results to incrementally populate the structured `TravelPlan` sidecar object (for the future MapLibre frontend).
 
 ## 10. Bedrock Integration Strategy
-Use the AWS SDK for JavaScript to communicate with Amazon Bedrock. Utilize the `Converse` API, which natively supports tool use (function calling) and maintains conversation history.
+Uses `@aws-sdk/client-bedrock-runtime` and the `Converse` API. Supports multi-turn conversation and sequential tool execution up to a configurable maximum round limit to prevent infinite loops. The agent never hallucinates metrics; it only reports metrics retrieved by the MCP server.
 
-## 11. TravelPlan Data Model
+## 11. TravelPlan & AgentResponse Data Model
 Canonical JSON object representing the plan.
 ```typescript
 interface TravelPlan {
   id: string;
-  origin: { name: string; lat: number; lon: number };
-  destination: { name: string; lat: number; lon: number };
-  departureTime: string; // ISO8601
-  actualEta: string; // ISO8601
-  durationMinutes: number;
-  distanceKm: number;
-  transportMode: string;
-  routeGeometry: any; // GeoJSON LineString
-  stops: Array<{ name: string; lat: number; lon: number; durationMinutes: number }>;
-  warnings: string[];
+  origin?: Location;
+  destination?: Location;
+  departureTime?: string; // ISO8601
+  actualEta?: string; // ISO8601
+  durationMinutes?: number;
+  distanceKm?: number;
+  transportMode?: string;
+  routeGeometry?: any; // GeoJSON LineString
+  stops?: Array<{ name: string; lat: number; lon: number; durationMinutes: number }>;
+  warnings?: string[];
+  constraints?: RouteConstraint[];
+}
+
+interface AgentResponse {
+  message: string;
+  travelPlan?: TravelPlan;
 }
 ```
 
