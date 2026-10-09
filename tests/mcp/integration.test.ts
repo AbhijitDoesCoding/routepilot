@@ -70,17 +70,73 @@ describe("MCP Server Integration", () => {
     mock.restoreAll();
   });
 
-  test("should discover health_check, geocode, calculate_route, and compare_routes tools", async () => {
+  test("should discover all 5 tools (health_check, geocode, calculate_route, compare_routes, find_places_along_route)", async () => {
     const tools = await client.listTools();
     const healthTool = tools.tools.find((t) => t.name === "health_check");
     const geocodeTool = tools.tools.find((t) => t.name === "geocode");
     const calculateRouteTool = tools.tools.find((t) => t.name === "calculate_route");
     const compareRoutesTool = tools.tools.find((t) => t.name === "compare_routes");
+    const findPlacesTool = tools.tools.find((t) => t.name === "find_places_along_route");
     
     assert.ok(healthTool, "health_check tool should be present");
     assert.ok(geocodeTool, "geocode tool should be present");
     assert.ok(calculateRouteTool, "calculate_route tool should be present");
     assert.ok(compareRoutesTool, "compare_routes tool should be present");
+    assert.ok(findPlacesTool, "find_places_along_route tool should be present");
+  });
+
+  test("should call find_places_along_route tool over Streamable HTTP with mock data", async () => {
+    const originalFetch = globalThis.fetch;
+    mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const urlString = input.toString();
+      if (urlString.includes("valhalla") || urlString.includes("8002")) {
+        return new Response(
+          JSON.stringify({
+            trip: {
+              summary: { length: 25.5, time: 2400 },
+              legs: [
+                {
+                  shape: "_p~iF~ps|U_ulLnnqC_mqNvxq`@",
+                  summary: { length: 25.5, time: 2400 },
+                  maneuvers: []
+                }
+              ]
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      if (urlString.includes("overpass") || urlString.includes("interpreter")) {
+        return new Response(
+          JSON.stringify({
+            elements: [
+              { type: "node", id: 101, lat: 3.8501, lon: -12.0201, tags: { name: "Route Café" } }
+            ]
+          }),
+          { status: 200 }
+        );
+      }
+      return originalFetch(input, init);
+    });
+
+    const result = await client.callTool({
+      name: "find_places_along_route",
+      arguments: {
+        locations: [{ lat: 3.85, lon: -12.02 }, { lat: 4.3252, lon: -12.6453 }],
+        mode: "auto",
+        category: "cafe",
+        radiusMeters: 2000,
+        limit: 5
+      }
+    });
+
+    assert.ok(result.content.length > 0);
+    const content = result.content[0] as any;
+    assert.strictEqual(content.type, "text");
+    const data = JSON.parse(content.text);
+    assert.ok(data.places);
+    assert.strictEqual(data.places.length, 1);
+    assert.strictEqual(data.places[0].name, "Route Café");
   });
 
   test("should call health_check tool", async () => {
