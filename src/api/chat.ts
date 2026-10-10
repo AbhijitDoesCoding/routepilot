@@ -1,5 +1,5 @@
 import { IncomingMessage, ServerResponse } from "node:http";
-import { BedrockAgent } from "../agent/client.js";
+import { RoutePilotAgent } from "../agent/types.js";
 import { z } from "zod";
 
 const chatRequestSchema = z.object({
@@ -7,7 +7,7 @@ const chatRequestSchema = z.object({
   message: z.string().min(1)
 });
 
-export const createChatHandler = (agent: BedrockAgent) => {
+export const createChatHandler = (agent: RoutePilotAgent) => {
   return async (req: IncomingMessage, res: ServerResponse) => {
     // Add CORS headers
     const allowedOrigin = process.env.CORS_ORIGIN || "http://localhost:5173";

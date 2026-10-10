@@ -48,6 +48,22 @@ export class MCPClientService {
   }
 
   /**
+   * Retrieves tools from the MCP server and formats them for Groq/OpenAI tool calling.
+   */
+  public async getGroqTools(): Promise<any[]> {
+    const response = await this.client.listTools();
+    
+    return response.tools.map(tool => ({
+      type: "function" as const,
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.inputSchema
+      }
+    }));
+  }
+
+  /**
    * Execute an MCP tool by name with arguments.
    */
   public async executeTool(name: string, args: Record<string, any>): Promise<MCPToolResult> {

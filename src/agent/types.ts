@@ -33,8 +33,12 @@ export interface AgentResponse {
   travelPlan?: TravelPlan;
 }
 
+export interface RoutePilotAgent {
+  converse(sessionId: string, userMessage: string): Promise<AgentResponse>;
+}
+
 export interface AgentContext {
   sessionId: string;
   travelPlan: TravelPlan;
-  messages: any[]; // Bedrock Message[]
+  messages: any[]; // Provider message array (Bedrock Message[] or Groq/OpenAI Message[])
 }

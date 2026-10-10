@@ -3,7 +3,7 @@ import { Readable } from "node:stream";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { createServer } from "./mcp/server.js";
 import { MCPClientService } from "./mcp/client/index.js";
-import { BedrockAgent } from "./agent/client.js";
+import { createAgent } from "./agent/factory.js";
 import { SessionStore } from "./agent/session.js";
 import { Clock } from "./agent/clock.js";
 import { createChatHandler } from "./api/chat.js";
@@ -68,10 +68,10 @@ server.listen(PORT, async () => {
     await mcpClient.connect();
     console.log("Internal MCP Client connected");
     
-    const agent = new BedrockAgent(mcpClient, new SessionStore(), new Clock());
+    const agent = createAgent(mcpClient, new SessionStore(), new Clock());
     chatHandler = createChatHandler(agent);
-    console.log(`Chat API available at http://localhost:${PORT}/api/chat`);
+    console.log(`Chat API available at http://localhost:${PORT}/api/chat (Provider: ${process.env.LLM_PROVIDER || "bedrock"})`);
   } catch (err) {
-    console.error("Failed to initialize Bedrock Agent:", err);
+    console.error("Failed to initialize RoutePilot Agent:", err);
   }
 });

@@ -3,7 +3,8 @@ import { MCPClientService, MCPToolResult } from "../mcp/client/index.js";
 import { getSystemPrompt } from "./prompts/routepilot.js";
 import { Clock } from "./clock.js";
 import { SessionStore } from "./session.js";
-import { AgentResponse, AgentContext } from "./types.js";
+import { AgentResponse, AgentContext, RoutePilotAgent } from "./types.js";
+import { updateTravelPlanFromCompareRoutes } from "./planner.js";
 import { TimeUtils } from "../domain/constraints.js";
 import pino from "pino";
 
@@ -14,7 +15,7 @@ const logger = pino({
   }
 });
 
-export class BedrockAgent {
+export class BedrockAgent implements RoutePilotAgent {
   private bedrockClient: BedrockRuntimeClient;
   private mcpService: MCPClientService;
   private sessionStore: SessionStore;
@@ -106,7 +107,7 @@ export class BedrockAgent {
 
               // If compare_routes is called successfully, update TravelPlan in session
               if (toolUse.name === "compare_routes" && !result.isError) {
-                this.updateTravelPlanFromCompareRoutes(context, toolUse.input, result.data);
+                updateTravelPlanFromCompareRoutes(context.travelPlan, toolUse.input, result.data);
               }
 
               toolResults.push({
@@ -166,67 +167,5 @@ export class BedrockAgent {
       travelPlan: context.travelPlan
     };
   }
-
-  /**
-   * Sniff the compare_routes input and output to update our structured TravelPlan
-   */
-  private updateTravelPlanFromCompareRoutes(context: AgentContext, input: any, result: any) {
-    try {
-      if (input.constraints) {
-        context.travelPlan.constraints = input.constraints;
-      }
-      if (input.locations && input.locations.length >= 2) {
-        context.travelPlan.origin = input.locations[0];
-        context.travelPlan.destination = input.locations[input.locations.length - 1];
-      }
-      if (input.mode) {
-        context.travelPlan.transportMode = input.mode;
-      }
-      
-      if (input.stops && Array.isArray(input.stops)) {
-        context.travelPlan.stops = input.stops;
-      } else {
-        context.travelPlan.stops = undefined;
-      }
-      
-      if (result.feasible && result.recommended && result.recommended.route) {
-        const route = result.recommended.route;
-        context.travelPlan.durationMinutes = route.durationMinutes;
-        context.travelPlan.drivingDurationMinutes = route.drivingDurationMinutes;
-        context.travelPlan.stopDurationMinutes = route.stopDurationMinutes;
-        context.travelPlan.distanceKm = route.distanceKm;
-        context.travelPlan.routeGeometry = route.geometry;
-        
-        if (result.recommended.constraintEvaluations) {
-          context.travelPlan.constraintEvaluations = result.recommended.constraintEvaluations;
-        }
-        
-        const arrivalConstraint = input.constraints?.find((c: any) => c.type === "arrival_deadline");
-        
-        if (input.departure_time) {
-          // Departure-first planning
-          context.travelPlan.departureTime = input.departure_time;
-          context.travelPlan.actualEta = TimeUtils.calculateArrivalTime(input.departure_time, route.durationMinutes);
-          
-          if (arrivalConstraint?.value) {
-            context.travelPlan.arrivalDeadline = arrivalConstraint.value;
-            context.travelPlan.bufferMinutes = TimeUtils.calculateBuffer(context.travelPlan.actualEta, arrivalConstraint.value);
-          } else {
-            context.travelPlan.arrivalDeadline = undefined;
-            context.travelPlan.bufferMinutes = undefined;
-          }
-        } else if (arrivalConstraint?.value) {
-          // Deadline-first planning
-          context.travelPlan.arrivalDeadline = arrivalConstraint.value;
-          const requiredBuffer = 0; // Default buffer for now
-          
-          context.travelPlan.departureTime = TimeUtils.calculateLatestDeparture(arrivalConstraint.value, route.durationMinutes, requiredBuffer);
-          context.travelPlan.actualEta = TimeUtils.calculateArrivalTime(context.travelPlan.departureTime, route.durationMinutes);
-          context.travelPlan.bufferMinutes = requiredBuffer;
-        }
-      }
-    } catch (err) {
-      logger.error({ error: err }, "Failed to parse compare_routes result for TravelPlan update");
-    }
-  }
 }
+

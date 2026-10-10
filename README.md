@@ -20,7 +20,7 @@ Browser / Alexa-like Simulator (Voice & Text)
                     ↓
               POST /api/chat
                     ↓
-              BedrockAgent (Amazon Bedrock Converse API)
+         createAgent (GroqAgent | BedrockAgent)
                     ↓
              MCPClientService (Streamable HTTP Client)
                     ↓
@@ -114,13 +114,32 @@ NOMINATIM_USER_AGENT=RoutePilot/1.0
 VALHALLA_BASE_URL=http://localhost:8002
 OVERPASS_BASE_URL=https://overpass-api.de/api/interpreter
 OVERPASS_USER_AGENT=RoutePilot/1.0
+
+# LLM Provider Configuration ("groq" or "bedrock")
+LLM_PROVIDER=groq
+
+# When LLM_PROVIDER=groq:
+GROQ_API_KEY=your_groq_api_key_here
+GROQ_MODEL_ID=openai/gpt-oss-120b
+
+# When LLM_PROVIDER=bedrock:
 AWS_REGION=us-east-1
 BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
+AWS_ACCESS_KEY_ID=your_aws_access_key_id
+AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+
 DEFAULT_TIMEZONE=Asia/Kolkata
-DEFAULT_ORIGIN_QUERY=
+DEFAULT_ORIGIN_QUERY=Pune Railway Station
 CORS_ORIGIN=http://localhost:5173
 LOG_LEVEL=info
 ```
+
+#### Provider Switching
+RoutePilot provides a clean model-provider abstraction:
+- **Groq (`LLM_PROVIDER=groq`):** Fast development and execution using Groq's official tool calling API (`openai/gpt-oss-120b`). Does not require AWS Bedrock credentials.
+- **Bedrock (`LLM_PROVIDER=bedrock`):** Production hackathon deployment using Amazon Bedrock Converse API (`BEDROCK_MODEL_ID`).
+
+Both providers interact with the same deterministic MCP tools (`health_check`, `geocode`, `calculate_route`, `compare_routes`, `find_places_along_route`) via Streamable HTTP. Neither provider performs arithmetic or route metrics itself.
 
 #### Frontend Configuration (Optional)
 

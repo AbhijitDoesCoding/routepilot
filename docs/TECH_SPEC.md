@@ -9,8 +9,11 @@ RoutePilot follows a clean modular architecture separating the agentic orchestra
 - **Geospatial & POI Providers:** Real deterministic services (OpenStreetMap Nominatim, Valhalla routing engine, Overpass API) abstracted behind typed provider interfaces.
 
 ## 2. Component Architecture
-- **Chat Controller (`src/api/chat.ts`):** Validates incoming requests and connects to the Bedrock agent.
-- **Bedrock Agent (`src/agent/client.ts`):** Manages multi-turn conversations and drives tool use via the Amazon Bedrock Converse API.
+- **Chat Controller (`src/api/chat.ts`):** Validates incoming requests and connects to the active RoutePilot agent.
+- **Agent Factory (`src/agent/factory.ts`):** Instantiates either `GroqAgent` (`LLM_PROVIDER=groq`) or `BedrockAgent` (`LLM_PROVIDER=bedrock`).
+- **Bedrock Agent (`src/agent/client.ts`):** Orchestrates multi-turn dialogue via the Amazon Bedrock Converse API.
+- **Groq Agent (`src/agent/groq.ts`):** Orchestrates multi-turn dialogue via Groq's official tool-calling API (`openai/gpt-oss-120b`).
+- **Shared Planner (`src/agent/planner.ts`):** Deterministic parser extracting canonical `TravelPlan` metrics from `compare_routes` tool results across all LLM providers.
 - **MCP Client (`src/mcp/client/index.ts`):** Dynamic client connecting over Streamable HTTP to discover and execute MCP tools.
 - **Constraint Engine (`src/domain/constraints.ts`):** Deterministic engine validating route candidates against hard constraints and soft preferences outside the LLM.
 - **Provider Adapters (`src/providers/`):**
@@ -22,11 +25,14 @@ RoutePilot follows a clean modular architecture separating the agentic orchestra
 ```text
 routepilot/
 ├── src/
-│   ├── agent/                 # Bedrock Converse loop, session store, clock, prompts
-│   │   ├── client.ts          # BedrockAgent orchestration & TravelPlan extraction
+│   ├── agent/                 # Agent loop, session store, clock, prompts, providers
+│   │   ├── client.ts          # BedrockAgent (Amazon Bedrock Converse API)
+│   │   ├── groq.ts            # GroqAgent (Groq tool-calling API)
+│   │   ├── factory.ts         # Agent factory selecting provider via LLM_PROVIDER
+│   │   ├── planner.ts         # Shared deterministic TravelPlan extraction
 │   │   ├── clock.ts           # Deterministic time provider
 │   │   ├── session.ts         # In-memory session context
-│   │   └── types.ts           # TravelPlan & AgentResponse data models
+│   │   └── types.ts           # RoutePilotAgent, TravelPlan & AgentResponse models
 │   ├── api/
 │   │   └── chat.ts            # POST /api/chat endpoint with safe error sanitization
 │   ├── domain/
@@ -47,7 +53,7 @@ routepilot/
 │   │   ├── types/             # Shared API & TravelPlan types
 │   │   └── App.tsx            # Alexa+ simulator UI with voice input/output
 │   └── tests/                 # Playwright E2E smoke tests (Scenarios A-I)
-├── tests/                     # 60 automated unit, domain, and integration tests
+├── tests/                     # 72 automated unit, domain, Groq, and integration tests
 ├── docs/                      # PRD, TECH_SPEC, HACKATHON_CHECKLIST, DEMO_SCRIPT
 └── .env.example               # Complete environment variable template
 ```
@@ -61,7 +67,7 @@ Alexa+ Simulator (React)
         ↓
 POST /api/chat
         ↓
-BedrockAgent (Converse API loop)
+createAgent (GroqAgent | BedrockAgent)
         ↓
 MCPClientService (Streamable HTTP)
         ↓
@@ -172,10 +178,32 @@ NOMINATIM_USER_AGENT=RoutePilot/1.0
 VALHALLA_BASE_URL=http://localhost:8002
 OVERPASS_BASE_URL=https://overpass-api.de/api/interpreter
 OVERPASS_USER_AGENT=RoutePilot/1.0
+
+# LLM Provider Configuration ("groq" or "bedrock")
+LLM_PROVIDER=groq
+
+# Groq Configuration (when LLM_PROVIDER=groq)
+GROQ_API_KEY=your_groq_api_key_here
+GROQ_MODEL_ID=openai/gpt-oss-120b
+
+# AWS Bedrock Configuration (when LLM_PROVIDER=bedrock)
 AWS_REGION=us-east-1
 BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
+AWS_ACCESS_KEY_ID=your_aws_access_key_id
+AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+
 DEFAULT_TIMEZONE=Asia/Kolkata
-DEFAULT_ORIGIN_QUERY=
+DEFAULT_ORIGIN_QUERY=Pune Railway Station
 CORS_ORIGIN=http://localhost:5173
 LOG_LEVEL=info
 ```
+
+## 11. Model-Provider Abstraction
+RoutePilot implements a provider boundary isolating the conversational agent from specific LLM vendors:
+- **`GroqAgent` (`LLM_PROVIDER=groq`):** Uses Groq's official tool-calling SDK with `openai/gpt-oss-120b`. Translates RoutePilot MCP tools into standard OpenAI-compatible function specifications.
+- **`BedrockAgent` (`LLM_PROVIDER=bedrock`):** Uses Amazon Bedrock Converse API with Anthropic Claude or Amazon Nova. Translates RoutePilot MCP tools into Bedrock tool specifications.
+- **Shared Deterministic Guarantees:** Regardless of provider:
+  1. MCP tools are executed solely through `MCPClientService` over Streamable HTTP (`/mcp`).
+  2. The LLM never calculates route metrics, departure times, arrival times, buffers, or stop durations.
+  3. All structured `TravelPlan` properties are deterministically extracted and calculated by `updateTravelPlanFromCompareRoutes` in `src/agent/planner.ts`.
+

@@ -1,5 +1,5 @@
 import { MCPClientService } from "../src/mcp/client/index.js";
-import { BedrockAgent } from "../src/agent/client.js";
+import { createAgent } from "../src/agent/factory.js";
 import { SessionStore } from "../src/agent/session.js";
 import { Clock } from "../src/agent/clock.js";
 import { randomUUID } from "node:crypto";
@@ -21,7 +21,7 @@ async function run() {
 
   const sessionStore = new SessionStore();
   const clock = new Clock();
-  const agent = new BedrockAgent(mcpService, sessionStore, clock);
+  const agent = createAgent(mcpService, sessionStore, clock);
 
   const sessionId = randomUUID();
   console.log(\`\\nSession started: \${sessionId}\\n\`);
