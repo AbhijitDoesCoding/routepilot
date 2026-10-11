@@ -426,6 +426,8 @@ describe("MCP Server Integration", () => {
       return originalFetch(input, init);
     });
 
+    const futureDeadline = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+
     const result = await client.callTool({
       name: "compare_routes",
       arguments: {
@@ -433,7 +435,7 @@ describe("MCP Server Integration", () => {
         mode: "auto",
         constraints: [
           { type: "avoid_tolls", severity: "hard" },
-          { type: "arrival_deadline", severity: "hard", value: "2026-10-12T07:00:00.000Z" }
+          { type: "arrival_deadline", severity: "hard", value: futureDeadline }
         ]
       }
     });
@@ -448,6 +450,53 @@ describe("MCP Server Integration", () => {
     assert.ok(data.recommended.route.geometry);
     assert.strictEqual(data.recommended.route.geometry.type, "LineString");
     assert.ok(data.recommended.route.geometry.coordinates.length >= 2);
+  });
+
+  test("should mark deadline-first compare_routes as infeasible when required departure has already passed", async () => {
+    const originalFetch = globalThis.fetch;
+    mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const urlString = input.toString();
+      if (urlString.includes("valhalla") || urlString.includes("8002")) {
+        return new Response(
+          JSON.stringify({
+            trip: {
+              summary: { length: 21.4, time: 3120, has_toll: false, has_highway: false },
+              legs: [
+                {
+                  shape: "_p~iF~ps|U_ulLnnqC_mqNvxq`@",
+                  summary: { length: 21.4, time: 3120 },
+                  maneuvers: []
+                }
+              ]
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      return originalFetch(input, init);
+    });
+
+    // Deadline 2 hours in the past relative to current time
+    const pastDeadline = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+
+    const result = await client.callTool({
+      name: "compare_routes",
+      arguments: {
+        locations: [{ lat: 18.528, lon: 73.874 }, { lat: 18.579, lon: 73.908 }],
+        mode: "auto",
+        constraints: [
+          { type: "arrival_deadline", severity: "hard", value: pastDeadline }
+        ]
+      }
+    });
+
+    assert.ok(!result.isError);
+    const content = result.content[0] as any;
+    const data = JSON.parse(content.text);
+    assert.strictEqual(data.feasible, false);
+    assert.ok(data.reason?.includes("No route satisfies all hard constraints"));
+    assert.strictEqual(data.recommended.valid, false);
+    assert.ok(data.recommended.violatedConstraints.includes("arrival_deadline"));
   });
 
 });

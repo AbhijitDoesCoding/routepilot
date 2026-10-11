@@ -128,8 +128,13 @@ export const compareRoutesHandler = async (args: any) => {
       throw new Error("Failed to generate any route candidates.");
     }
 
+    // Determine effective current time: use provided valid current_time or generate backend ISO timestamp
+    const effectiveCurrentTime = (current_time && typeof current_time === "string" && !isNaN(new Date(current_time).getTime()))
+      ? current_time
+      : new Date().toISOString();
+
     // Evaluate candidates
-    const evaluations = candidates.map(c => engine.evaluate(c, typedConstraints, departure_time, current_time));
+    const evaluations = candidates.map(c => engine.evaluate(c, typedConstraints, departure_time, effectiveCurrentTime));
 
     // Rank candidates
     const ranking = engine.rank(evaluations);

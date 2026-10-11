@@ -155,6 +155,41 @@ describe("ConstraintEngine", () => {
     assert.strictEqual(evaluation.notEvaluableConstraints[0], "arrival_deadline");
   });
 
+  test("ranking is marked infeasible when hard arrival_deadline required departure has already passed", () => {
+    const candidate = createMockCandidate({ durationMinutes: 60, candidateId: "c1" });
+    const deadline = "2026-10-07T10:00:00Z";
+    const currentTime = "2026-10-07T09:30:00Z"; // required departure 09:00:00Z is 30 min in the past
+
+    const evaluation = engine.evaluate(
+      candidate,
+      [{ type: "arrival_deadline", severity: "hard", value: deadline }],
+      undefined,
+      currentTime
+    );
+    const ranking = engine.rank([evaluation]);
+
+    assert.strictEqual(ranking.feasible, false);
+    assert.strictEqual(ranking.recommended?.valid, false);
+    assert.ok(ranking.reason?.includes("No route satisfies all hard constraints"));
+  });
+
+  test("ranking is marked feasible when hard arrival_deadline required departure is in the future", () => {
+    const candidate = createMockCandidate({ durationMinutes: 60, candidateId: "c1" });
+    const deadline = "2026-10-07T10:00:00Z";
+    const currentTime = "2026-10-07T08:30:00Z"; // required departure 09:00:00Z is 30 min in the future
+
+    const evaluation = engine.evaluate(
+      candidate,
+      [{ type: "arrival_deadline", severity: "hard", value: deadline }],
+      undefined,
+      currentTime
+    );
+    const ranking = engine.rank([evaluation]);
+
+    assert.strictEqual(ranking.feasible, true);
+    assert.strictEqual(ranking.recommended?.valid, true);
+  });
+
   test("rank should rank valid routes by score", () => {
     const eval1 = engine.evaluate(createMockCandidate({ durationMinutes: 30, distanceKm: 15, candidateId: "slow" }), []);
     const eval2 = engine.evaluate(createMockCandidate({ durationMinutes: 20, distanceKm: 10, candidateId: "fast" }), []);
