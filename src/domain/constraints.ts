@@ -46,12 +46,14 @@ export class ConstraintEngine {
    * Evaluate a route candidate against constraints.
    * @param candidate The route to evaluate.
    * @param constraints Array of constraints.
-   * @param departureTimeIso Optional departure time needed for time-based evaluations.
+   * @param departureTimeIso Optional departure time needed for departure-first evaluations.
+   * @param currentTimeIso Optional reference current time for checking if deadline-first departure is in the past.
    */
   public evaluate(
     candidate: RouteCandidate, 
     constraints: RouteConstraint[],
-    departureTimeIso?: string
+    departureTimeIso?: string,
+    currentTimeIso?: string
   ): RouteEvaluation {
     let valid = true;
     const constraintEvaluations: ConstraintEvaluation[] = [];
@@ -90,8 +92,26 @@ export class ConstraintEngine {
           }
           break;
 
-        case "arrival_deadline":
+        case "arrival_deadline": {
+          if (!constraint.value || isNaN(new Date(constraint.value).getTime())) {
+            status = "not_evaluable";
+            reason = "Invalid arrival deadline format";
+            break;
+          }
+
+          if (typeof candidate.durationMinutes !== "number" || !isFinite(candidate.durationMinutes)) {
+            status = "not_evaluable";
+            reason = "Route duration unavailable; cannot evaluate arrival deadline";
+            break;
+          }
+
           if (departureTimeIso) {
+            // Departure-first workflow: evaluate whether user-supplied departure meets deadline
+            if (isNaN(new Date(departureTimeIso).getTime())) {
+              status = "not_evaluable";
+              reason = "Invalid departure time format";
+              break;
+            }
             const arrival = TimeUtils.calculateArrivalTime(departureTimeIso, candidate.durationMinutes);
             const buffer = TimeUtils.calculateBuffer(arrival, constraint.value);
             if (buffer < 0) {
@@ -102,10 +122,25 @@ export class ConstraintEngine {
               reason = `Arrives ${Math.round(buffer)} minutes before deadline`;
             }
           } else {
-            status = "not_evaluable";
-            reason = "Departure time is unknown; cannot compute arrival time";
+            // Deadline-first workflow: deterministically calculate candidate's latest departure
+            const computedDeparture = TimeUtils.calculateLatestDeparture(constraint.value, candidate.durationMinutes, 0);
+
+            if (currentTimeIso && !isNaN(new Date(currentTimeIso).getTime())) {
+              const currentMs = new Date(currentTimeIso).getTime();
+              const depMs = new Date(computedDeparture).getTime();
+              if (depMs < currentMs) {
+                const lateMinutes = Math.round((currentMs - depMs) / (60 * 1000));
+                status = "violated";
+                reason = `Deadline is impossible: latest departure (${new Date(computedDeparture).toISOString()}) is ${lateMinutes} minutes in the past`;
+                break;
+              }
+            }
+
+            status = "satisfied";
+            reason = `Feasible latest departure at ${new Date(computedDeparture).toISOString()}`;
           }
           break;
+        }
       }
 
       constraintEvaluations.push({

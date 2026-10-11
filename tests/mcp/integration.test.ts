@@ -402,4 +402,53 @@ describe("MCP Server Integration", () => {
     assert.strictEqual(result.isError, true);
   });
 
+  test("should evaluate deadline-first compare_routes over Streamable HTTP without departure_time and return feasible recommendation", async () => {
+    const originalFetch = globalThis.fetch;
+    mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const urlString = input.toString();
+      if (urlString.includes("valhalla") || urlString.includes("8002")) {
+        return new Response(
+          JSON.stringify({
+            trip: {
+              summary: { length: 21.4, time: 3120, has_toll: false, has_highway: false },
+              legs: [
+                {
+                  shape: "_p~iF~ps|U_ulLnnqC_mqNvxq`@",
+                  summary: { length: 21.4, time: 3120 },
+                  maneuvers: []
+                }
+              ]
+            }
+          }),
+          { status: 200 }
+        );
+      }
+      return originalFetch(input, init);
+    });
+
+    const result = await client.callTool({
+      name: "compare_routes",
+      arguments: {
+        locations: [{ lat: 18.528, lon: 73.874 }, { lat: 18.579, lon: 73.908 }],
+        mode: "auto",
+        constraints: [
+          { type: "avoid_tolls", severity: "hard" },
+          { type: "arrival_deadline", severity: "hard", value: "2026-10-12T07:00:00.000Z" }
+        ]
+      }
+    });
+
+    assert.ok(!result.isError);
+    const content = result.content[0] as any;
+    assert.strictEqual(content.type, "text");
+    const data = JSON.parse(content.text);
+    assert.strictEqual(data.feasible, true);
+    assert.ok(data.recommended);
+    assert.strictEqual(data.recommended.valid, true);
+    assert.ok(data.recommended.route.geometry);
+    assert.strictEqual(data.recommended.route.geometry.type, "LineString");
+    assert.ok(data.recommended.route.geometry.coordinates.length >= 2);
+  });
+
 });
+

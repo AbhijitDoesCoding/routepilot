@@ -7,6 +7,27 @@ interface RouteMapProps {
   plan: TravelPlan | null;
 }
 
+const isValidLineString = (geom: any): boolean => {
+  if (!geom || geom.type !== "LineString" || !Array.isArray(geom.coordinates)) {
+    return false;
+  }
+  if (geom.coordinates.length < 2) {
+    return false;
+  }
+  return geom.coordinates.every((coord: any) =>
+    Array.isArray(coord) &&
+    coord.length >= 2 &&
+    typeof coord[0] === "number" &&
+    typeof coord[1] === "number" &&
+    Number.isFinite(coord[0]) &&
+    Number.isFinite(coord[1]) &&
+    coord[0] >= -180 &&
+    coord[0] <= 180 &&
+    coord[1] >= -90 &&
+    coord[1] <= 90
+  );
+};
+
 export const RouteMap = ({ plan }: RouteMapProps) => {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -43,11 +64,33 @@ export const RouteMap = ({ plan }: RouteMapProps) => {
     const currentMap = map.current;
     
     const updateMap = () => {
+      // Ensure the map style is fully loaded before manipulating layers/sources
+      if (!currentMap.isStyleLoaded()) {
+        currentMap.once("load", updateMap);
+        return;
+      }
+
       // 1. Update Route Line
-      if (plan.routeGeometry) {
+      if (isValidLineString(plan.routeGeometry)) {
         const source = currentMap.getSource("route") as maplibregl.GeoJSONSource;
         if (source) {
           source.setData(plan.routeGeometry);
+          if (!currentMap.getLayer("route")) {
+            currentMap.addLayer({
+              id: "route",
+              type: "line",
+              source: "route",
+              layout: {
+                "line-join": "round",
+                "line-cap": "round",
+              },
+              paint: {
+                "line-color": "#2563eb",
+                "line-width": 5,
+                "line-opacity": 0.85,
+              },
+            });
+          }
         } else {
           currentMap.addSource("route", {
             type: "geojson",
@@ -63,9 +106,19 @@ export const RouteMap = ({ plan }: RouteMapProps) => {
               "line-cap": "round",
             },
             paint: {
-              "line-color": "#3b82f6",
+              "line-color": "#2563eb",
               "line-width": 5,
+              "line-opacity": 0.85,
             },
+          });
+        }
+      } else {
+        // Clear route line if route geometry is absent or invalid
+        const source = currentMap.getSource("route") as maplibregl.GeoJSONSource;
+        if (source) {
+          source.setData({
+            type: "FeatureCollection",
+            features: []
           });
         }
       }
@@ -76,6 +129,14 @@ export const RouteMap = ({ plan }: RouteMapProps) => {
 
       // Helper to create a marker
       const addMarker = (loc: Location, color: string, label: string) => {
+        if (
+          typeof loc.lat !== "number" ||
+          typeof loc.lon !== "number" ||
+          !Number.isFinite(loc.lat) ||
+          !Number.isFinite(loc.lon)
+        ) {
+          return;
+        }
         const popup = new maplibregl.Popup({ offset: 25 });
         const displayName = loc.name ? `${label}: ${loc.name}` : label;
         popup.setText(displayName);
@@ -100,27 +161,23 @@ export const RouteMap = ({ plan }: RouteMapProps) => {
       }
 
       // 4. Fit bounds
-      if (plan.routeGeometry?.coordinates?.length > 0) {
+      if (isValidLineString(plan.routeGeometry)) {
         const coordinates = plan.routeGeometry.coordinates;
         const bounds = coordinates.reduce((b: maplibregl.LngLatBounds, coord: [number, number]) => {
           return b.extend(coord);
         }, new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
 
-        currentMap.fitBounds(bounds, { padding: 50 });
+        currentMap.fitBounds(bounds, { padding: 50, maxZoom: 15 });
       } else if (plan.origin && plan.destination) {
         const bounds = new maplibregl.LngLatBounds(
           [plan.origin.lon, plan.origin.lat],
           [plan.destination.lon, plan.destination.lat]
         );
-        currentMap.fitBounds(bounds, { padding: 50 });
+        currentMap.fitBounds(bounds, { padding: 50, maxZoom: 15 });
       }
     };
 
-    if (currentMap.isStyleLoaded()) {
-      updateMap();
-    } else {
-      currentMap.once("styledata", updateMap);
-    }
+    updateMap();
   }, [plan]);
 
   return (

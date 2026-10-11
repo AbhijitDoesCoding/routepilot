@@ -107,11 +107,50 @@ describe("ConstraintEngine", () => {
     assert.strictEqual(evaluation.violatedConstraints[0], "arrival_deadline");
   });
 
-  test("should invalidate missing departure for hard arrival_deadline", () => {
+  test("hard arrival deadline with no departure_time: deadline-first route remains evaluable and can be feasible", () => {
     const candidate = createMockCandidate({ durationMinutes: 60 });
     const deadline = "2026-10-07T10:00:00Z";
     
-    const evaluation = engine.evaluate(candidate, [{ type: "arrival_deadline", severity: "hard", value: deadline }]); // missing departure
+    const evaluation = engine.evaluate(candidate, [{ type: "arrival_deadline", severity: "hard", value: deadline }]);
+    assert.strictEqual(evaluation.valid, true);
+    assert.strictEqual(evaluation.satisfiedConstraints[0], "arrival_deadline");
+    assert.strictEqual(evaluation.notEvaluableConstraints.length, 0);
+  });
+
+  test("deadline-first evaluation is violated when latest departure is in the past relative to current time", () => {
+    const candidate = createMockCandidate({ durationMinutes: 60 });
+    const deadline = "2026-10-07T10:00:00Z"; // departure would be 09:00:00Z
+    const currentTime = "2026-10-07T09:30:00Z"; // 30 min after required departure
+    
+    const evaluation = engine.evaluate(
+      candidate,
+      [{ type: "arrival_deadline", severity: "hard", value: deadline }],
+      undefined,
+      currentTime
+    );
+    assert.strictEqual(evaluation.valid, false);
+    assert.strictEqual(evaluation.violatedConstraints[0], "arrival_deadline");
+    assert.ok(evaluation.constraintEvaluations[0].reason?.includes("in the past"));
+  });
+
+  test("deadline-first evaluation is satisfied when latest departure is after current time", () => {
+    const candidate = createMockCandidate({ durationMinutes: 60 });
+    const deadline = "2026-10-07T10:00:00Z"; // departure at 09:00:00Z
+    const currentTime = "2026-10-07T08:00:00Z"; // 1 hour before required departure
+    
+    const evaluation = engine.evaluate(
+      candidate,
+      [{ type: "arrival_deadline", severity: "hard", value: deadline }],
+      undefined,
+      currentTime
+    );
+    assert.strictEqual(evaluation.valid, true);
+    assert.strictEqual(evaluation.satisfiedConstraints[0], "arrival_deadline");
+  });
+
+  test("arrival_deadline with invalid date format is not evaluable", () => {
+    const candidate = createMockCandidate({ durationMinutes: 60 });
+    const evaluation = engine.evaluate(candidate, [{ type: "arrival_deadline", severity: "hard", value: "not-a-date" }]);
     assert.strictEqual(evaluation.valid, false);
     assert.strictEqual(evaluation.notEvaluableConstraints[0], "arrival_deadline");
   });

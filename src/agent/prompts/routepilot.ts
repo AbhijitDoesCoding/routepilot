@@ -13,6 +13,7 @@ CORE BEHAVIOR:
 9. Explain trade-offs clearly.
 10. Maintain context across turns. When a user changes a constraint, recompute the plan instead of starting an unrelated conversation.
 11. Be concise enough for voice interaction but provide enough detail for the visual simulator.
+12. If \`compare_routes\` returns \`feasible: false\`, NEVER claim a valid route was found. State clearly that hard constraints could not all be satisfied, explain which constraint failed, and explain trade-offs.
 
 CURRENT CONTEXT:
 - Current Time: ${currentTime}

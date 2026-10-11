@@ -17,7 +17,8 @@ export const compareRoutesDefinition = {
       })
     ).min(2).describe("Waypoints to route between"),
     mode: z.enum(["auto", "pedestrian", "bicycle"]).default("auto").describe("Transport mode"),
-    departure_time: z.string().datetime({ offset: true }).optional().describe("ISO-8601 departure time (required to evaluate arrival_deadline)"),
+    departure_time: z.string().datetime({ offset: true }).optional().describe("Optional ISO-8601 departure time (for departure-first planning; if omitted, latest departure is calculated deterministically from arrival_deadline)"),
+    current_time: z.string().datetime({ offset: true }).optional().describe("Optional ISO-8601 current reference time for deadline verification"),
     stops: z.array(
       z.object({
         locationIndex: z.number().int().min(0).describe("Index in the locations array this stop corresponds to"),
@@ -40,7 +41,7 @@ export const compareRoutesDefinition = {
 
 export const compareRoutesHandler = async (args: any) => {
   try {
-    const { locations, mode, departure_time, constraints, stops } = args;
+    const { locations, mode, departure_time, current_time, constraints, stops } = args;
     const typedConstraints = constraints as RouteConstraint[];
     
     // Calculate total stop duration
@@ -128,7 +129,7 @@ export const compareRoutesHandler = async (args: any) => {
     }
 
     // Evaluate candidates
-    const evaluations = candidates.map(c => engine.evaluate(c, typedConstraints, departure_time));
+    const evaluations = candidates.map(c => engine.evaluate(c, typedConstraints, departure_time, current_time));
 
     // Rank candidates
     const ranking = engine.rank(evaluations);
