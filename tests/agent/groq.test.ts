@@ -497,7 +497,7 @@ describe("Groq Agent Loop", () => {
 
     const response = await agent.converse("max-rounds-session", "Infinite loop prompt");
 
-    assert.strictEqual(roundCount, 5); // Exactly 5 rounds max
+    assert.strictEqual(roundCount, 6); // Exactly 5 tool rounds + 1 finalization call
     assert.ok(response.message.includes("too many tool calls"));
   });
 
@@ -566,7 +566,7 @@ describe("Groq Agent Loop", () => {
     assert.strictEqual(compacted.alternatives[0].route.geometry, undefined);
   });
 
-  test("11. compactToolResult bounds geocode and find_places_along_route results", () => {
+  test("11. compactToolResult bounds geocode and find_places_along_route results with distanceToRouteMeters", () => {
     const rawGeocode = {
       results: Array.from({ length: 10 }, (_, i) => ({
         name: `Place ${i}`,
@@ -586,13 +586,14 @@ describe("Groq Agent Loop", () => {
         category: "coffee",
         lat: 18.5 + i * 0.01,
         lon: 73.8 + i * 0.01,
-        distanceMeters: 50 + i * 10,
+        distanceToRouteMeters: 50 + i * 10,
         extraBulkyOsmData: { tags: { amenity: "cafe" } }
       }))
     };
     const compactedPlaces = compactToolResult("find_places_along_route", rawPlaces);
     assert.strictEqual(compactedPlaces.places.length, 5);
     assert.strictEqual(compactedPlaces.count, 15);
+    assert.strictEqual(compactedPlaces.places[0].distanceToRouteMeters, 50);
   });
 
   test("12. formatTravelPlanSummary produces concise summary string without geometry and returns null when empty", () => {
@@ -919,6 +920,364 @@ describe("Groq Agent Loop", () => {
     const response = await agent.converse("persistent-rate-limit-session", "Test token limit");
 
     assert.ok(response.message.includes("Route planning is temporarily experiencing high demand or token limits"));
+  });
+
+  test("18. a tool call on the last permitted tool round still gets one final text response", async () => {
+    const mcpService = new MCPClientService();
+    mock.method(mcpService, "getGroqTools", async () => [
+      { type: "function", function: { name: "compare_routes", parameters: {} } }
+    ]);
+
+    mock.method(mcpService, "executeTool", async () => ({
+      isError: false,
+      data: {
+        feasible: true,
+        recommended: {
+          valid: true,
+          route: { distanceKm: 18.2, durationMinutes: 35, geometry: { type: "LineString", coordinates: [[73.8, 18.5], [73.9, 18.6]] } }
+        }
+      }
+    }));
+
+    const sessionStore = new SessionStore();
+    const clock = new Clock();
+    const agent = new GroqAgent(mcpService, sessionStore, clock);
+
+    let callCount = 0;
+    mock.method((agent as any).groqClient.chat.completions, "create", async (params: any) => {
+      callCount++;
+      if (callCount <= 5) {
+        // Return tool call for rounds 1-5
+        return {
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                tool_calls: [{ id: `call_${callCount}`, function: { name: "compare_routes", arguments: '{"locations":[{"lat":18.5,"lon":73.8},{"lat":18.6,"lon":73.9}]}' } }]
+              },
+              finish_reason: "tool_calls"
+            }
+          ]
+        };
+      } else {
+        // Finalization call (call 6): tool calling must be disabled
+        assert.strictEqual(params.tools, undefined);
+        return {
+          choices: [
+            {
+              message: { role: "assistant", content: "Final summarized route after 5 tool rounds." },
+              finish_reason: "stop"
+            }
+          ]
+        };
+      }
+    });
+
+    const response = await agent.converse("final-text-session", "Plan my route");
+
+    assert.strictEqual(callCount, 6);
+    assert.strictEqual(response.message, "Final summarized route after 5 tool rounds.");
+    assert.ok(response.travelPlan);
+    assert.strictEqual(response.travelPlan.distanceKm, 18.2);
+  });
+
+  test("19. the finalization call cannot execute more tools and falls back to TravelPlan summary", async () => {
+    const mcpService = new MCPClientService();
+    mock.method(mcpService, "getGroqTools", async () => [
+      { type: "function", function: { name: "compare_routes", parameters: {} } }
+    ]);
+
+    let toolExecutionCount = 0;
+    mock.method(mcpService, "executeTool", async () => {
+      toolExecutionCount++;
+      return {
+        isError: false,
+        data: {
+          feasible: true,
+          recommended: {
+            valid: true,
+            route: { distanceKm: 15.0, durationMinutes: 30 }
+          }
+        }
+      };
+    });
+
+    const sessionStore = new SessionStore();
+    const clock = new Clock();
+    const agent = new GroqAgent(mcpService, sessionStore, clock);
+
+    let callCount = 0;
+    mock.method((agent as any).groqClient.chat.completions, "create", async () => {
+      callCount++;
+      if (callCount <= 5) {
+        return {
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                tool_calls: [{ id: `call_${callCount}`, function: { name: "compare_routes", arguments: '{"locations":[{"lat":18.5,"lon":73.8},{"lat":18.6,"lon":73.9}]}' } }]
+              },
+              finish_reason: "tool_calls"
+            }
+          ]
+        };
+      } else {
+        // Call 6 attempts to return tool calls instead of content
+        return {
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: null,
+                tool_calls: [{ id: "unwanted_tool", function: { name: "compare_routes", arguments: "{}" } }]
+              },
+              finish_reason: "tool_calls"
+            }
+          ]
+        };
+      }
+    });
+
+    const response = await agent.converse("no-unwanted-tools-session", "Route please");
+
+    assert.strictEqual(callCount, 6);
+    assert.strictEqual(toolExecutionCount, 5); // Unwanted tool call in finalization was NOT executed!
+    assert.ok(response.message.includes("I have planned your route"));
+    assert.ok(response.message.includes("15.0 km"));
+  });
+
+  test("20. repeated identical failed find_places_along_route requests cannot loop indefinitely", async () => {
+    const mcpService = new MCPClientService();
+    mock.method(mcpService, "getGroqTools", async () => [
+      { type: "function", function: { name: "find_places_along_route", parameters: {} } }
+    ]);
+
+    let executeCallCount = 0;
+    mock.method(mcpService, "executeTool", async (name: string) => {
+      executeCallCount++;
+      return {
+        isError: true,
+        data: { isError: true, error: "Overpass API 500 error", retryable: false }
+      };
+    });
+
+    const sessionStore = new SessionStore();
+    const clock = new Clock();
+    const agent = new GroqAgent(mcpService, sessionStore, clock);
+
+    let groqRound = 0;
+    mock.method((agent as any).groqClient.chat.completions, "create", async (params: any) => {
+      groqRound++;
+      if (groqRound === 1) {
+        return {
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                tool_calls: [{ id: "call_fp_1", function: { name: "find_places_along_route", arguments: '{"category":"cafe"}' } }]
+              },
+              finish_reason: "tool_calls"
+            }
+          ]
+        };
+      } else if (groqRound === 2) {
+        // Model attempts to call the EXACT SAME failing tool again
+        return {
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                tool_calls: [{ id: "call_fp_2", function: { name: "find_places_along_route", arguments: '{"category":"cafe"}' } }]
+              },
+              finish_reason: "tool_calls"
+            }
+          ]
+        };
+      } else {
+        // Model stops and generates response
+        const toolMsg = params.messages[params.messages.length - 1];
+        assert.ok(toolMsg.content.includes("Repeated requests are prohibited"));
+        return {
+          choices: [
+            {
+              message: { role: "assistant", content: "Stop discovery is temporarily unavailable. Proceeding with baseline route." },
+              finish_reason: "stop"
+            }
+          ]
+        };
+      }
+    });
+
+    const response = await agent.converse("dedup-failing-tool-session", "Find coffee on the way");
+
+    assert.strictEqual(executeCallCount, 1); // Only executed ONCE; 2nd identical call was intercepted!
+    assert.strictEqual(response.message, "Stop discovery is temporarily unavailable. Proceeding with baseline route.");
+  });
+
+  test("21. failed stop discovery preserves baseline route and full geometry", async () => {
+    const mcpService = new MCPClientService();
+    mock.method(mcpService, "getGroqTools", async () => [
+      { type: "function", function: { name: "find_places_along_route", parameters: {} } }
+    ]);
+    mock.method(mcpService, "executeTool", async () => ({
+      isError: true,
+      data: { isError: true, error: "Overpass API error: 503", retryable: false }
+    }));
+
+    const sessionStore = new SessionStore();
+    const clock = new Clock();
+    const agent = new GroqAgent(mcpService, sessionStore, clock);
+
+    // Pre-populate session with feasible baseline route from Turn 1 (266 coordinates)
+    const baselineCoords = Array.from({ length: 266 }, (_, i) => [73.8 + i * 0.001, 18.5 + i * 0.001]);
+    sessionStore.updateSession("preserve-baseline-session", {
+      sessionId: "preserve-baseline-session",
+      messages: [{ role: "user", content: "Go to airport" }, { role: "assistant", content: "Baseline route planned." }],
+      travelPlan: {
+        id: "plan-1",
+        origin: { name: "Home", lat: 18.5, lon: 73.8 },
+        destination: { name: "Airport", lat: 18.6, lon: 73.9 },
+        distanceKm: 12.5,
+        durationMinutes: 25,
+        routeGeometry: { type: "LineString", coordinates: baselineCoords }
+      }
+    });
+
+    let round = 0;
+    mock.method((agent as any).groqClient.chat.completions, "create", async () => {
+      round++;
+      if (round === 1) {
+        return {
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                tool_calls: [{ id: "call_fp_err", function: { name: "find_places_along_route", arguments: '{"category":"cafe"}' } }]
+              },
+              finish_reason: "tool_calls"
+            }
+          ]
+        };
+      } else {
+        return {
+          choices: [
+            {
+              message: { role: "assistant", content: "Café discovery is temporarily unavailable; your direct baseline route to Airport is preserved." },
+              finish_reason: "stop"
+            }
+          ]
+        };
+      }
+    });
+
+    const response = await agent.converse("preserve-baseline-session", "Add a coffee stop");
+
+    // Baseline route & 266 coordinates must remain intact!
+    assert.ok(response.travelPlan);
+    assert.strictEqual(response.travelPlan.distanceKm, 12.5);
+    assert.strictEqual(response.travelPlan.durationMinutes, 25);
+    assert.strictEqual(response.travelPlan.routeGeometry?.coordinates.length, 266);
+    assert.ok(response.message.includes("Café discovery is temporarily unavailable"));
+  });
+
+  test("22. successful stop selection and route recalculation preserve full geometry and stop duration", async () => {
+    const mcpService = new MCPClientService();
+    mock.method(mcpService, "getGroqTools", async () => [
+      { type: "function", function: { name: "find_places_along_route", parameters: {} } },
+      { type: "function", function: { name: "compare_routes", parameters: {} } }
+    ]);
+
+    const routeWithStopCoords = Array.from({ length: 271 }, (_, i) => [73.8 + i * 0.001, 18.5 + i * 0.001]);
+    mock.method(mcpService, "executeTool", async (name: string) => {
+      if (name === "find_places_along_route") {
+        return {
+          isError: false,
+          data: {
+            places: [{ id: "cafe_1", name: "Corner Cafe", category: "cafe", lat: 18.53, lon: 73.85, distanceToRouteMeters: 45 }]
+          }
+        };
+      }
+      return {
+        isError: false,
+        data: {
+          feasible: true,
+          recommended: {
+            valid: true,
+            route: {
+              distanceKm: 13.2,
+              durationMinutes: 47, // 32 drive + 15 stop
+              drivingDurationMinutes: 32,
+              stopDurationMinutes: 15,
+              geometry: { type: "LineString", coordinates: routeWithStopCoords }
+            },
+            constraintEvaluations: [{ type: "arrival_deadline", severity: "hard", status: "satisfied" }]
+          }
+        }
+      };
+    });
+
+    const sessionStore = new SessionStore();
+    const clock = new Clock();
+    const agent = new GroqAgent(mcpService, sessionStore, clock);
+
+    let round = 0;
+    mock.method((agent as any).groqClient.chat.completions, "create", async () => {
+      round++;
+      if (round === 1) {
+        return {
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                tool_calls: [{ id: "c1", function: { name: "find_places_along_route", arguments: '{"category":"cafe"}' } }]
+              },
+              finish_reason: "tool_calls"
+            }
+          ]
+        };
+      } else if (round === 2) {
+        return {
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                tool_calls: [{
+                  id: "c2",
+                  function: {
+                    name: "compare_routes",
+                    arguments: JSON.stringify({
+                      locations: [{ lat: 18.5, lon: 73.8 }, { lat: 18.53, lon: 73.85, name: "Corner Cafe" }, { lat: 18.6, lon: 73.9 }],
+                      stops: [{ locationIndex: 1, name: "Corner Cafe", durationMinutes: 15 }],
+                      constraints: [{ type: "arrival_deadline", severity: "hard", value: "2026-10-12T07:00:00Z" }]
+                    })
+                  }
+                }]
+              },
+              finish_reason: "tool_calls"
+            }
+          ]
+        };
+      } else {
+        return {
+          choices: [
+            {
+              message: { role: "assistant", content: "Added Corner Cafe with a 15-minute stop. Total time: 47 mins." },
+              finish_reason: "stop"
+            }
+          ]
+        };
+      }
+    });
+
+    const response = await agent.converse("stop-success-session", "Add a 15 min coffee stop");
+
+    assert.ok(response.travelPlan);
+    assert.strictEqual(response.travelPlan.stops?.length, 1);
+    assert.strictEqual(response.travelPlan.stops?.[0].name, "Corner Cafe");
+    assert.strictEqual(response.travelPlan.stopDurationMinutes, 15);
+    assert.strictEqual(response.travelPlan.durationMinutes, 47);
+    assert.strictEqual(response.travelPlan.routeGeometry?.coordinates.length, 271);
+    assert.strictEqual(response.message, "Added Corner Cafe with a 15-minute stop. Total time: 47 mins.");
   });
 });
 

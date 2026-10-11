@@ -71,6 +71,60 @@ describe("OverpassProvider", () => {
     );
   });
 
+  test("one transient Overpass failure followed by success recovers correctly", async () => {
+    let callCount = 0;
+    mock.method(global, "fetch", async () => {
+      callCount++;
+      if (callCount === 1) {
+        return { ok: false, status: 503 };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          elements: [
+            { type: "node", id: 10, lat: 18.5205, lon: 73.8568, tags: { name: "Recovered Cafe" } }
+          ]
+        })
+      };
+    });
+
+    const provider = new OverpassProvider();
+    const places = await provider.findPlacesAlongRoute({
+      routeGeometry: mockRouteGeometry,
+      category: "cafe",
+      radiusMeters: 5000,
+      limit: 2
+    });
+
+    assert.strictEqual(callCount, 2);
+    assert.strictEqual(places.length, 1);
+    assert.strictEqual(places[0].name, "Recovered Cafe");
+  });
+
+  test("two failed bounded attempts produce OverpassError with attempts=2", async () => {
+    let callCount = 0;
+    mock.method(global, "fetch", async () => {
+      callCount++;
+      return { ok: false, status: 429 };
+    });
+
+    const provider = new OverpassProvider();
+    await assert.rejects(
+      provider.findPlacesAlongRoute({
+        routeGeometry: mockRouteGeometry,
+        category: "cafe",
+        radiusMeters: 1000
+      }),
+      (err: any) => {
+        assert.strictEqual(err.attempts, 2);
+        assert.strictEqual(err.status, 429);
+        assert.strictEqual(err.category, "rate_limited");
+        return true;
+      }
+    );
+    assert.strictEqual(callCount, 2);
+  });
+
   test("should throw on malformed response", async () => {
     mock.method(global, "fetch", async () => ({
       ok: true,

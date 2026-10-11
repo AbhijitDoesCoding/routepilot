@@ -104,8 +104,67 @@ describe("find_places_along_route MCP tool", () => {
       radiusMeters: 100 // very tight radius - nothing should match
     });
 
-    assert.ok(!result.isError);
+    assert.strictEqual(!!result.isError, false);
     const data = JSON.parse(result.content[0].text);
-    assert.ok(data.places !== undefined || data.message !== undefined);
+    assert.deepStrictEqual(data.places, []);
+    assert.ok(data.message.includes("No places found"));
+  });
+
+  test("successful empty POI results remain different from provider errors", async () => {
+    // 1. Successful query with no places
+    mock.method(global, "fetch", async (url: string) => {
+      if (url.includes("8002") || url.includes("valhalla")) {
+        return {
+          ok: true,
+          json: async () => ({
+            trip: {
+              summary: { length: 10, time: 600 },
+              legs: [{ shape: "...", summary: { length: 10, time: 600 }, maneuvers: [] }],
+              status: 0
+            }
+          })
+        };
+      }
+      return { ok: true, json: async () => ({ elements: [] }) };
+    });
+
+    const emptyResult = await findPlacesAlongRouteHandler({
+      locations: mockLocations,
+      category: "cafe",
+      radiusMeters: 500
+    });
+    assert.strictEqual(!!emptyResult.isError, false);
+    const emptyData = JSON.parse(emptyResult.content[0].text);
+    assert.strictEqual(Array.isArray(emptyData.places), true);
+    assert.strictEqual(emptyData.places.length, 0);
+
+    // 2. Provider failure
+    mock.method(global, "fetch", async (url: string) => {
+      if (url.includes("8002") || url.includes("valhalla")) {
+        return {
+          ok: true,
+          json: async () => ({
+            trip: {
+              summary: { length: 10, time: 600 },
+              legs: [{ shape: "...", summary: { length: 10, time: 600 }, maneuvers: [] }],
+              status: 0
+            }
+          })
+        };
+      }
+      return { ok: false, status: 503 };
+    });
+
+    const errorResult = await findPlacesAlongRouteHandler({
+      locations: mockLocations,
+      category: "cafe",
+      radiusMeters: 500
+    });
+    assert.strictEqual(errorResult.isError, true);
+    const errorData = JSON.parse(errorResult.content[0].text);
+    assert.strictEqual(errorData.places, undefined); // Does NOT convert error to empty places!
+    assert.strictEqual(errorData.isError, true);
+    assert.strictEqual(errorData.retryable, false);
+    assert.ok(errorData.message.includes("temporarily unavailable"));
   });
 });

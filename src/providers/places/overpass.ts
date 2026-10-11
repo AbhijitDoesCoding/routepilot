@@ -1,4 +1,32 @@
 import { PlacesProvider, FindPlacesRequest, Place } from "./types.js";
+import pino from "pino";
+
+const logger = pino({
+  level: process.env.LOG_LEVEL || "info",
+  transport: {
+    target: "pino-pretty"
+  }
+});
+
+export class OverpassError extends Error {
+  public readonly category: "rate_limited" | "server_error" | "timeout" | "client_error" | "malformed_response" | "invalid_request";
+  public readonly status?: number;
+  public readonly retryable: boolean;
+  public readonly attempts: number;
+
+  constructor(
+    message: string,
+    category: "rate_limited" | "server_error" | "timeout" | "client_error" | "malformed_response" | "invalid_request",
+    options?: { status?: number; retryable?: boolean; attempts?: number }
+  ) {
+    super(message);
+    this.name = "OverpassError";
+    this.category = category;
+    this.status = options?.status;
+    this.retryable = options?.retryable ?? false;
+    this.attempts = options?.attempts ?? 1;
+  }
+}
 
 // Haversine distance between two points in meters
 const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
@@ -50,7 +78,7 @@ export class OverpassProvider implements PlacesProvider {
   async findPlacesAlongRoute(request: FindPlacesRequest): Promise<Place[]> {
     const { routeGeometry, category, radiusMeters, limit = 10 } = request;
     if (!routeGeometry || !routeGeometry.coordinates || routeGeometry.coordinates.length === 0) {
-      throw new Error("Invalid route geometry");
+      throw new OverpassError("Invalid route geometry", "invalid_request", { retryable: false, attempts: 0 });
     }
 
     // Determine category OSM tags
@@ -58,14 +86,13 @@ export class OverpassProvider implements PlacesProvider {
     if (category === "coffee_shop" || category === "cafe") {
       tags = `["amenity"="cafe"]`;
     } else {
-      throw new Error(`Unsupported category: ${category}`);
+      throw new OverpassError(`Unsupported category: ${category}`, "invalid_request", { retryable: false, attempts: 0 });
     }
 
     // Compute bounding box of the route to limit the query
     const coordinates: number[][] = routeGeometry.coordinates;
     let minLat = Infinity, minLon = Infinity, maxLat = -Infinity, maxLon = -Infinity;
     
-    // Sample coordinates if too large to avoid huge bounding box logic? No, just use standard bounding box.
     for (const [lon, lat] of coordinates) {
       if (lat < minLat) minLat = lat;
       if (lat > maxLat) maxLat = lat;
@@ -84,57 +111,129 @@ export class OverpassProvider implements PlacesProvider {
       out body;
     `;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    const maxAttempts = 2; // At most one retry (2 attempts total)
+    let lastError: any = null;
 
-    try {
-      const response = await fetch(this.baseUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": this.userAgent
-        },
-        body: `data=${encodeURIComponent(query)}`,
-        signal: controller.signal
-      });
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const attemptStart = Date.now();
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
 
-      if (!response.ok) {
-        throw new Error(`Overpass API error: ${response.status}`);
-      }
+      try {
+        const response = await fetch(this.baseUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": this.userAgent
+          },
+          body: `data=${encodeURIComponent(query)}`,
+          signal: controller.signal
+        });
 
-      const data = await response.json();
-      if (!data || !data.elements) {
-        throw new Error("Malformed Overpass response");
-      }
+        const durationMs = Date.now() - attemptStart;
 
-      const places: Place[] = [];
-      for (const el of data.elements) {
-        if (el.type === "node" && el.tags && el.tags.name) {
-          const dist = distanceToLineString(el.lat, el.lon, coordinates);
-          if (dist <= radiusMeters) {
-            places.push({
-              id: el.id.toString(),
-              name: el.tags.name,
-              lat: el.lat,
-              lon: el.lon,
-              category,
-              distanceToRouteMeters: dist
-            });
+        if (!response.ok) {
+          const status = response.status;
+          const isRetryable = status === 429 || (status >= 500 && status < 600);
+          const errorCategory = status === 429 ? "rate_limited" : (status >= 500 ? "server_error" : "client_error");
+
+          logger.warn({
+            toolName: "find_places_along_route",
+            provider: "Overpass",
+            errorCategory,
+            httpStatus: status,
+            retryable: isRetryable,
+            attempt,
+            durationMs
+          }, `Overpass HTTP error: ${status}`);
+
+          const err = new OverpassError(`Overpass API error: ${status}`, errorCategory, {
+            status,
+            retryable: isRetryable,
+            attempts: attempt
+          });
+
+          if (isRetryable && attempt < maxAttempts) {
+            lastError = err;
+            await new Promise(resolve => setTimeout(resolve, 800));
+            continue;
+          }
+          throw err;
+        }
+
+        const data = await response.json();
+        if (!data || !data.elements) {
+          logger.warn({
+            toolName: "find_places_along_route",
+            provider: "Overpass",
+            errorCategory: "malformed_response",
+            retryable: false,
+            attempt,
+            durationMs: Date.now() - attemptStart
+          }, "Malformed Overpass response");
+          throw new OverpassError("Malformed Overpass response", "malformed_response", { retryable: false, attempts: attempt });
+        }
+
+        const places: Place[] = [];
+        for (const el of data.elements) {
+          if (el.type === "node" && el.tags && el.tags.name) {
+            const dist = distanceToLineString(el.lat, el.lon, coordinates);
+            if (dist <= radiusMeters) {
+              places.push({
+                id: el.id.toString(),
+                name: el.tags.name,
+                lat: el.lat,
+                lon: el.lon,
+                category,
+                distanceToRouteMeters: dist
+              });
+            }
           }
         }
-      }
 
-      // Sort by distance and limit
-      places.sort((a, b) => (a.distanceToRouteMeters || 0) - (b.distanceToRouteMeters || 0));
-      return places.slice(0, limit);
+        // Sort by distance and limit
+        places.sort((a, b) => (a.distanceToRouteMeters || 0) - (b.distanceToRouteMeters || 0));
+        return places.slice(0, limit);
 
-    } catch (err: any) {
-      if (err.name === "AbortError") {
-        throw new Error("Overpass API timeout");
+      } catch (err: any) {
+        const durationMs = Date.now() - attemptStart;
+        if (err instanceof OverpassError) {
+          throw err;
+        }
+
+        const isTimeout = err.name === "AbortError" || err.message?.includes("timeout");
+        const errorCategory = isTimeout ? "timeout" : "client_error";
+        const isRetryable = isTimeout;
+
+        logger.warn({
+          toolName: "find_places_along_route",
+          provider: "Overpass",
+          errorCategory,
+          retryable: isRetryable,
+          attempt,
+          durationMs
+        }, `Overpass request exception: ${err.message}`);
+
+        const overpassErr = new OverpassError(
+          isTimeout ? "Overpass API timeout" : (err.message || "Overpass query failed"),
+          errorCategory,
+          { retryable: isRetryable, attempts: attempt }
+        );
+
+        if (isRetryable && attempt < maxAttempts) {
+          lastError = overpassErr;
+          await new Promise(resolve => setTimeout(resolve, 800));
+          continue;
+        }
+        throw overpassErr;
+      } finally {
+        clearTimeout(timeout);
       }
-      throw err;
-    } finally {
-      clearTimeout(timeout);
     }
+
+    if (lastError) {
+      throw lastError;
+    }
+    throw new OverpassError("Overpass query failed after retries", "server_error", { attempts: maxAttempts });
   }
 }

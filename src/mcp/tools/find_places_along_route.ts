@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { ValhallaProvider } from "../../providers/routing/valhalla.js";
-import { OverpassProvider } from "../../providers/places/overpass.js";
+import { OverpassProvider, OverpassError } from "../../providers/places/overpass.js";
+import pino from "pino";
+
+const logger = pino({
+  level: process.env.LOG_LEVEL || "info",
+  transport: {
+    target: "pino-pretty"
+  }
+});
 
 const routingProvider = new ValhallaProvider();
 const placesProvider = new OverpassProvider();
@@ -24,8 +32,9 @@ export const findPlacesAlongRouteDefinition = {
 };
 
 export const findPlacesAlongRouteHandler = async (args: any) => {
+  const handlerStart = Date.now();
   try {
-    const { locations, mode, category, radiusMeters, limit } = args;
+    const { locations, mode = "auto", category, radiusMeters = 1000, limit = 5 } = args;
     
     // Calculate baseline route to get geometry
     const routeResult = await routingProvider.calculateRoute({ locations, mode });
@@ -59,11 +68,32 @@ export const findPlacesAlongRouteHandler = async (args: any) => {
     };
 
   } catch (error: any) {
+    const durationMs = Date.now() - handlerStart;
+    const category = error.category || (error.message?.includes("timeout") ? "timeout" : "provider_error");
+    const status = error.status;
+    const attempts = error.attempts || 1;
+
+    logger.error({
+      toolName: "find_places_along_route",
+      errorCategory: category,
+      httpStatus: status,
+      attempts,
+      durationMs,
+      error: error.message
+    }, "find_places_along_route tool execution failed");
+
     return {
       content: [
         {
           type: "text" as const,
-          text: JSON.stringify({ error: error.message || "Failed to find places along route" })
+          text: JSON.stringify({
+            isError: true,
+            error: error.message || "Failed to find places along route",
+            category,
+            status,
+            retryable: false,
+            message: "Stop discovery is temporarily unavailable due to external provider error. Do NOT call find_places_along_route again with identical arguments. Preserve the feasible baseline route and inform the user that stop discovery along the route is temporarily unavailable."
+          }, null, 2)
         }
       ],
       isError: true,

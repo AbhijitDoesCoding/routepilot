@@ -153,7 +153,7 @@ export function compactToolResult(toolName: string, data: any): any {
           category: p.category,
           lat: p.lat,
           lon: p.lon,
-          distanceMeters: p.distanceMeters
+          distanceToRouteMeters: p.distanceToRouteMeters ?? p.distanceMeters
         }))
       };
     }
@@ -161,6 +161,32 @@ export function compactToolResult(toolName: string, data: any): any {
   }
 
   return data;
+}
+
+/**
+ * Generates an accurate, deterministic textual summary of the TravelPlan
+ * when the model fails to provide a final text response.
+ */
+export function buildTravelPlanFallback(plan?: TravelPlan): string {
+  if (!plan || plan.distanceKm === undefined) {
+    return "I apologize, but I'm having trouble completing this request right now due to too many tool calls.";
+  }
+  const orig = plan.origin?.name || (plan.origin ? `${plan.origin.lat}, ${plan.origin.lon}` : "your origin");
+  const dest = plan.destination?.name || (plan.destination ? `${plan.destination.lat}, ${plan.destination.lon}` : "your destination");
+  const dist = plan.distanceKm.toFixed(1);
+  const dur = Math.round(plan.durationMinutes ?? 0);
+  let msg = `I have planned your route from ${orig} to ${dest}. The total distance is ${dist} km with an estimated travel time of ${dur} minutes.`;
+  if (plan.departureTime) {
+    msg += ` Recommended departure is by ${plan.departureTime}.`;
+  }
+  if (plan.stops && plan.stops.length > 0) {
+    const stopStrs = plan.stops.map(s => `${s.name} (${s.durationMinutes} min stop)`);
+    msg += ` Scheduled stops: ${stopStrs.join(", ")}.`;
+  }
+  if (plan.warnings && plan.warnings.length > 0) {
+    msg += ` Note: ${plan.warnings.join("; ")}.`;
+  }
+  return msg;
 }
 
 export class GroqAgent implements RoutePilotAgent {
@@ -219,14 +245,16 @@ export class GroqAgent implements RoutePilotAgent {
 
     const tools = await this.mcpService.getGroqTools();
 
-    const maxRounds = 5;
-    let rounds = 0;
+    const maxToolRounds = parseInt(process.env.MAX_TOOL_ROUNDS || "5", 10);
+    let toolRounds = 0;
+    let modelRounds = 0;
+    const failedToolSignatures = new Set<string>();
     let finishReason: string | undefined;
     let finalMessageText = "";
 
-    while (rounds < maxRounds) {
-      rounds++;
-      logger.info({ sessionId, round: rounds, modelId: this.modelId }, "Sending request to Groq");
+    while (toolRounds < maxToolRounds) {
+      modelRounds++;
+      logger.info({ sessionId, toolRound: toolRounds, modelRound: modelRounds, modelId: this.modelId }, "Sending request to Groq");
 
       const startTime = Date.now();
       let response: any;
@@ -251,7 +279,7 @@ export class GroqAgent implements RoutePilotAgent {
 
         logger.error({
           sessionId,
-          round: rounds,
+          modelRound: modelRounds,
           modelId: this.modelId,
           statusCode,
           isRateOrTokenLimit,
@@ -316,6 +344,7 @@ export class GroqAgent implements RoutePilotAgent {
       });
 
       if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
+        toolRounds++;
         for (const toolCall of assistantMsg.tool_calls) {
           const callId = toolCall.id;
           const fnName = toolCall.function?.name;
@@ -336,12 +365,42 @@ export class GroqAgent implements RoutePilotAgent {
             continue;
           }
 
+          const toolSig = `${fnName}:${JSON.stringify(parsedArgs)}`;
+          if (failedToolSignatures.has(toolSig)) {
+            logger.warn({ sessionId, toolName: fnName, toolSig }, "Blocking repeated identical tool call that previously failed");
+            workingMessages.push({
+              role: "tool",
+              tool_call_id: callId,
+              content: JSON.stringify({
+                isError: true,
+                error: `Tool "${fnName}" previously failed with identical arguments in this turn. Repeated requests are prohibited.`,
+                category: "repeated_failure",
+                retryable: false,
+                instruction: "Do not call this tool again with identical arguments. Preserve the baseline route and explain that stop discovery is temporarily unavailable."
+              })
+            });
+            continue;
+          }
+
           try {
             const toolStart = Date.now();
             const result = await this.mcpService.executeTool(fnName, parsedArgs);
             const toolLatency = Date.now() - toolStart;
 
             logger.info({ sessionId, toolName: fnName, latencyMs: toolLatency, isError: result.isError }, "MCP tool execution completed");
+
+            if (result.isError) {
+              failedToolSignatures.add(toolSig);
+              logger.warn({
+                sessionId,
+                toolName: fnName,
+                toolCallId: callId,
+                latencyMs: toolLatency,
+                errorCategory: result.data?.category || "tool_error",
+                errorStatus: result.data?.status,
+                errorMessage: result.data?.error || result.data?.message
+              }, "MCP tool execution returned error");
+            }
 
             // Update TravelPlan with the FULL, uncompacted MCP result data
             if (fnName === "compare_routes" && !result.isError) {
@@ -357,6 +416,7 @@ export class GroqAgent implements RoutePilotAgent {
               content: typeof modelData === "string" ? modelData : JSON.stringify(modelData)
             });
           } catch (execErr: any) {
+            failedToolSignatures.add(toolSig);
             logger.error({ sessionId, toolName: fnName, error: execErr.message }, "MCP tool execution failed");
             workingMessages.push({
               role: "tool",
@@ -371,9 +431,39 @@ export class GroqAgent implements RoutePilotAgent {
       }
     }
 
-    if (rounds >= maxRounds && (finishReason === "tool_calls" || workingMessages[workingMessages.length - 1]?.role === "tool")) {
-      logger.warn({ sessionId }, "Maximum tool rounds exceeded in Groq agent");
-      finalMessageText = "I apologize, but I'm having trouble completing this request right now due to too many tool calls.";
+    // If the last message in workingMessages is a tool result, execute one finalization request with tools disabled
+    const lastMsg = workingMessages[workingMessages.length - 1];
+    if (lastMsg?.role === "tool") {
+      logger.info({ sessionId, toolRounds }, "Executing final response generation with tool calling disabled");
+      try {
+        const finalResponse = await this.groqClient.chat.completions.create({
+          model: this.modelId,
+          messages: workingMessages as any,
+          tools: undefined,
+          tool_choice: "none" as any,
+          max_completion_tokens: this.maxCompletionTokens
+        });
+
+        const finalChoice = finalResponse.choices && finalResponse.choices[0];
+        const finalAssistantMsg = finalChoice?.message;
+
+        if (finalAssistantMsg?.content && finalAssistantMsg.content.trim()) {
+          finalMessageText = finalAssistantMsg.content;
+          workingMessages.push({
+            role: "assistant",
+            content: finalMessageText
+          });
+        } else {
+          finalMessageText = buildTravelPlanFallback(context.travelPlan);
+        }
+      } catch (finalErr: any) {
+        logger.error({ sessionId, error: finalErr.message }, "Finalization response failed, using TravelPlan fallback");
+        finalMessageText = buildTravelPlanFallback(context.travelPlan);
+      }
+    }
+
+    if (!finalMessageText) {
+      finalMessageText = buildTravelPlanFallback(context.travelPlan);
     }
 
     // Persist ONLY clean conversational history (user message + final assistant text response)
