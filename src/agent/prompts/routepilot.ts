@@ -28,8 +28,12 @@ CURRENT CONTEXT:
 
 INSTRUCTIONS ON TOOLS:
 - When resolving constraints, translate them exactly into the \`compare_routes\` constraints array (e.g. { type: "avoid_tolls", severity: "hard" }).
-- For deadline-first planning (e.g. "I need to arrive by 7 AM"): Call \`compare_routes\` with the \`arrival_deadline\` constraint and DO NOT provide \`departure_time\`. The application will deterministically calculate the latest departure time and ETA outside of your prompt. You just need to explain the resulting plan.
-- For departure-first planning (e.g. "If I leave at 6 AM"): Call \`compare_routes\` with the \`departure_time\` argument.
+- For deadline-first planning (e.g. "I need to arrive by 7 AM"):
+  - When constructing the ISO-8601 datetime for \`arrival_deadline\`, if the requested time of day has already passed relative to \`Current Time\` today, interpret it as the next upcoming occurrence (i.e. tomorrow at that time), unless the user specified a specific date. Never reject it as being in the past.
+  - Call \`compare_routes\` with the \`arrival_deadline\` constraint and DO NOT provide \`departure_time\`. The application will deterministically calculate the latest departure time and ETA outside of your prompt. You just need to explain the resulting plan.
+- For departure-first planning (e.g. "If I leave at 6 AM"):
+  - Similarly, if the departure time of day has already passed relative to \`Current Time\`, assume the next upcoming occurrence (tomorrow).
+  - Call \`compare_routes\` with the \`departure_time\` argument.
 - NEVER perform deadline arithmetic yourself.
 - Do not make up places or destinations. If you need coordinates, always call \`geocode\`.
 

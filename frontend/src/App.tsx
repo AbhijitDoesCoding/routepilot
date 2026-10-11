@@ -3,6 +3,7 @@ import { useRoutePilot } from "./hooks/useRoutePilot";
 import { useSpeechInput, useSpeechOutput } from "./hooks/useSpeech";
 import { RouteMap } from "./components/RouteMap";
 import { TravelPlanCard } from "./components/TravelPlanCard";
+import { MarkdownRenderer } from "./components/MarkdownRenderer";
 import { Send, Loader2, Mic, MicOff, Volume2 } from "lucide-react";
 import clsx from "clsx";
 
@@ -104,12 +105,16 @@ function App() {
                 {m.role === "user" ? "You" : "RoutePilot"}
               </span>
               <div className={clsx(
-                "px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap",
+                "px-4 py-2.5 rounded-2xl text-sm leading-relaxed",
                 m.role === "user"
-                  ? "bg-blue-600 text-white rounded-br-sm"
+                  ? "bg-blue-600 text-white rounded-br-sm whitespace-pre-wrap"
                   : "bg-gray-100 text-gray-800 rounded-bl-sm"
               )}>
-                {m.text}
+                {m.role === "assistant" ? (
+                  <MarkdownRenderer content={m.text} />
+                ) : (
+                  m.text
+                )}
               </div>
               {m.role === "assistant" && speechOutputSupported && (
                 <button
