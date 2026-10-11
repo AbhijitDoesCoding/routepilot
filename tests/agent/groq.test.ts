@@ -1,6 +1,6 @@
 import { test, describe, mock, afterEach, beforeEach } from "node:test";
 import * as assert from "node:assert";
-import { GroqAgent } from "../../src/agent/groq.js";
+import { GroqAgent, compactToolResult, formatTravelPlanSummary } from "../../src/agent/groq.js";
 import { MCPClientService } from "../../src/mcp/client/index.js";
 import { SessionStore } from "../../src/agent/session.js";
 import { Clock } from "../../src/agent/clock.js";
@@ -392,7 +392,7 @@ describe("Groq Agent Loop", () => {
     assert.strictEqual(userMessages[1].content, "Turn 2 request");
   });
 
-  test("7. API error handling propagates cleanly", async () => {
+  test("7. unexpected API error handling propagates cleanly", async () => {
     const mcpService = new MCPClientService();
     mock.method(mcpService, "getGroqTools", async () => []);
 
@@ -401,14 +401,14 @@ describe("Groq Agent Loop", () => {
     const agent = new GroqAgent(mcpService, sessionStore, clock);
 
     mock.method((agent as any).groqClient.chat.completions, "create", async () => {
-      throw new Error("Groq 429 Rate Limit Exceeded");
+      throw new Error("Groq 500 Internal Server Error");
     });
 
     await assert.rejects(
       async () => {
         await agent.converse("err-session", "Hello");
       },
-      /Groq 429 Rate Limit Exceeded/
+      /Groq 500 Internal Server Error/
     );
   });
 
@@ -499,6 +499,426 @@ describe("Groq Agent Loop", () => {
 
     assert.strictEqual(roundCount, 5); // Exactly 5 rounds max
     assert.ok(response.message.includes("too many tool calls"));
+  });
+
+  test("10. compactToolResult omits coordinates, legs, maneuvers and preserves metrics/evaluations", () => {
+    const mockFullCompare = {
+      feasible: true,
+      reason: "All hard constraints satisfied",
+      recommended: {
+        valid: true,
+        score: 0.95,
+        route: {
+          candidateId: "rec_1",
+          distanceKm: 25.4,
+          durationMinutes: 48,
+          drivingDurationMinutes: 48,
+          stopDurationMinutes: 0,
+          hasToll: false,
+          hasHighway: false,
+          costingProfile: "auto",
+          geometry: {
+            type: "LineString",
+            coordinates: Array.from({ length: 266 }, (_, i) => [73.8 + i * 0.001, 18.5 + i * 0.001])
+          },
+          legs: [{ distance: 25400, maneuvers: [{ instruction: "Turn right", type: 1 }] }]
+        },
+        constraintEvaluations: [{ type: "avoid_tolls", severity: "hard", status: "satisfied" }],
+        violatedConstraints: [],
+        satisfiedConstraints: ["avoid_tolls"],
+        explanation: "Feasible toll-free route"
+      },
+      alternatives: [
+        {
+          valid: false,
+          score: 0.5,
+          route: {
+            candidateId: "alt_1",
+            distanceKm: 20.0,
+            durationMinutes: 35,
+            hasToll: true,
+            hasHighway: true,
+            geometry: { type: "LineString", coordinates: [[73.8, 18.5], [73.9, 18.6]] }
+          },
+          violatedConstraints: ["avoid_tolls"],
+          explanation: "Contains toll"
+        }
+      ]
+    };
+
+    const compacted = compactToolResult("compare_routes", mockFullCompare);
+
+    assert.strictEqual(compacted.feasible, true);
+    assert.strictEqual(compacted.reason, "All hard constraints satisfied");
+    assert.strictEqual(compacted.recommended.route.distanceKm, 25.4);
+    assert.strictEqual(compacted.recommended.route.durationMinutes, 48);
+    assert.strictEqual(compacted.recommended.route.hasToll, false);
+    assert.strictEqual(compacted.recommended.route.hasHighway, false);
+    // Crucial: geometry, legs, maneuvers must NOT be present
+    assert.strictEqual(compacted.recommended.route.geometry, undefined);
+    assert.strictEqual(compacted.recommended.route.legs, undefined);
+    assert.strictEqual(compacted.recommended.route.maneuvers, undefined);
+    // Preserves evaluations
+    assert.strictEqual(compacted.recommended.constraintEvaluations.length, 1);
+    // Preserves alternatives without geometry
+    assert.strictEqual(compacted.alternatives.length, 1);
+    assert.strictEqual(compacted.alternatives[0].route.distanceKm, 20.0);
+    assert.strictEqual(compacted.alternatives[0].route.geometry, undefined);
+  });
+
+  test("11. compactToolResult bounds geocode and find_places_along_route results", () => {
+    const rawGeocode = {
+      results: Array.from({ length: 10 }, (_, i) => ({
+        name: `Place ${i}`,
+        lat: 18.5 + i * 0.01,
+        lon: 73.8 + i * 0.01,
+        extraInfo: "Unneeded metadata"
+      }))
+    };
+    const compactedGeocode = compactToolResult("geocode", rawGeocode);
+    assert.strictEqual(compactedGeocode.results.length, 3);
+    assert.strictEqual(compactedGeocode.results[0].name, "Place 0");
+
+    const rawPlaces = {
+      places: Array.from({ length: 15 }, (_, i) => ({
+        id: `place_${i}`,
+        name: `Cafe ${i}`,
+        category: "coffee",
+        lat: 18.5 + i * 0.01,
+        lon: 73.8 + i * 0.01,
+        distanceMeters: 50 + i * 10,
+        extraBulkyOsmData: { tags: { amenity: "cafe" } }
+      }))
+    };
+    const compactedPlaces = compactToolResult("find_places_along_route", rawPlaces);
+    assert.strictEqual(compactedPlaces.places.length, 5);
+    assert.strictEqual(compactedPlaces.count, 15);
+  });
+
+  test("12. formatTravelPlanSummary produces concise summary string without geometry and returns null when empty", () => {
+    assert.strictEqual(formatTravelPlanSummary(null as any), null);
+    assert.strictEqual(formatTravelPlanSummary({} as any), null);
+
+    const plan: any = {
+      origin: { name: "Home", lat: 18.5, lon: 73.8 },
+      destination: { name: "Pune Airport", lat: 18.58, lon: 73.92 },
+      arrivalDeadline: "2026-10-10T07:00:00.000Z",
+      departureTime: "2026-10-10T06:08:00.000Z",
+      actualEta: "2026-10-10T07:00:00.000Z",
+      durationMinutes: 52,
+      drivingDurationMinutes: 52,
+      distanceKm: 21.4,
+      stops: [{ name: "Starbucks", durationMinutes: 15 }],
+      constraints: [{ type: "avoid_tolls", severity: "hard" }],
+      // Bulky geometry
+      routeGeometry: { type: "LineString", coordinates: [[73.8, 18.5], [73.9, 18.58]] }
+    };
+
+    const summary = formatTravelPlanSummary(plan);
+    assert.ok(summary);
+    assert.ok(summary.includes("Origin: Home"));
+    assert.ok(summary.includes("Destination: Pune Airport"));
+    assert.ok(summary.includes("Arrival Deadline: 2026-10-10T07:00:00.000Z"));
+    assert.ok(summary.includes("Calculated Latest Departure: 2026-10-10T06:08:00.000Z"));
+    assert.ok(summary.includes("Distance: 21.4 km"));
+    assert.ok(summary.includes("Starbucks (15 min stop)"));
+    assert.ok(summary.includes("avoid_tolls (hard)"));
+    assert.ok(summary.includes("Route Status: Feasible"));
+    // Ensure no coordinates or LineString in summary
+    assert.strictEqual(summary.includes("LineString"), false);
+    assert.strictEqual(summary.includes("routeGeometry"), false);
+  });
+
+  test("13. GroqAgent.converse sends compact tool results to Groq, while travelPlan retains full GeoJSON geometry", async () => {
+    const mcpService = new MCPClientService();
+    mock.method(mcpService, "getGroqTools", async () => [
+      { type: "function", function: { name: "compare_routes", parameters: {} } }
+    ]);
+
+    const full266Coords = Array.from({ length: 266 }, (_, i) => [73.8 + i * 0.001, 18.5 + i * 0.001]);
+    const mockCompareResult = {
+      feasible: true,
+      recommended: {
+        valid: true,
+        route: {
+          distanceKm: 21.4,
+          durationMinutes: 52,
+          drivingDurationMinutes: 52,
+          geometry: { type: "LineString", coordinates: full266Coords }
+        },
+        constraintEvaluations: [{ type: "avoid_tolls", severity: "hard", status: "satisfied" }]
+      }
+    };
+
+    mock.method(mcpService, "executeTool", async () => {
+      return { isError: false, data: mockCompareResult };
+    });
+
+    const sessionStore = new SessionStore();
+    const clock = new Clock();
+    const agent = new GroqAgent(mcpService, sessionStore, clock);
+
+    let round = 0;
+    let toolPayloadSentToGroq: any = null;
+    mock.method((agent as any).groqClient.chat.completions, "create", async (params: any) => {
+      round++;
+      if (round === 1) {
+        return {
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                tool_calls: [
+                  {
+                    id: "call_geo_cmp",
+                    type: "function",
+                    function: {
+                      name: "compare_routes",
+                      arguments: JSON.stringify({ locations: [{ lat: 18.5, lon: 73.8 }, { lat: 18.58, lon: 73.92 }] })
+                    }
+                  }
+                ]
+              },
+              finish_reason: "tool_calls"
+            }
+          ]
+        };
+      } else {
+        const toolMsg = params.messages.find((m: any) => m.role === "tool");
+        toolPayloadSentToGroq = JSON.parse(toolMsg.content);
+        return {
+          choices: [
+            {
+              message: { role: "assistant", content: "Route planned successfully." },
+              finish_reason: "stop"
+            }
+          ]
+        };
+      }
+    });
+
+    const response = await agent.converse("compact-test-session", "Plan my route");
+
+    // Check payload sent to Groq
+    assert.ok(toolPayloadSentToGroq);
+    assert.strictEqual(toolPayloadSentToGroq.recommended.route.geometry, undefined);
+    assert.strictEqual(toolPayloadSentToGroq.recommended.route.distanceKm, 21.4);
+
+    // Check full TravelPlan returned to application/frontend
+    assert.ok(response.travelPlan);
+    assert.strictEqual(response.travelPlan.routeGeometry?.coordinates.length, 266);
+  });
+
+  test("14. Turn 2 working messages do not contain Turn 1 tool calls or tool results", async () => {
+    const mcpService = new MCPClientService();
+    mock.method(mcpService, "getGroqTools", async () => [
+      { type: "function", function: { name: "geocode", parameters: {} } }
+    ]);
+    mock.method(mcpService, "executeTool", async () => ({
+      isError: false,
+      data: { results: [{ lat: 18.5, lon: 73.8, name: "Home" }] }
+    }));
+
+    const sessionStore = new SessionStore();
+    const clock = new Clock();
+    const agent = new GroqAgent(mcpService, sessionStore, clock);
+
+    let capturedTurn2Messages: any[] = [];
+    let turn = 1;
+    let roundInTurn = 0;
+
+    mock.method((agent as any).groqClient.chat.completions, "create", async (params: any) => {
+      roundInTurn++;
+      if (turn === 1) {
+        if (roundInTurn === 1) {
+          return {
+            choices: [
+              {
+                message: {
+                  role: "assistant",
+                  tool_calls: [{ id: "t1_call", function: { name: "geocode", arguments: '{"query":"Home"}' } }]
+                },
+                finish_reason: "tool_calls"
+              }
+            ]
+          };
+        } else {
+          return {
+            choices: [{ message: { role: "assistant", content: "Turn 1 final answer." }, finish_reason: "stop" }]
+          };
+        }
+      } else {
+        capturedTurn2Messages = [...params.messages];
+        return {
+          choices: [{ message: { role: "assistant", content: "Turn 2 final answer." }, finish_reason: "stop" }]
+        };
+      }
+    });
+
+    // Execute Turn 1
+    await agent.converse("t1-t2-session", "Find Home");
+
+    // Execute Turn 2
+    turn = 2;
+    roundInTurn = 0;
+    await agent.converse("t1-t2-session", "Add coffee stop");
+
+    // Verify Turn 2's sent messages
+    assert.ok(capturedTurn2Messages.length > 0);
+    const hasToolRole = capturedTurn2Messages.some((m: any) => m.role === "tool");
+    const hasToolCalls = capturedTurn2Messages.some((m: any) => m.tool_calls && m.tool_calls.length > 0);
+    assert.strictEqual(hasToolRole, false, "Turn 2 must NOT have role: tool from Turn 1");
+    assert.strictEqual(hasToolCalls, false, "Turn 2 must NOT have tool_calls from Turn 1");
+
+    // Verify conversational messages are present
+    const userMsgs = capturedTurn2Messages.filter((m: any) => m.role === "user");
+    assert.strictEqual(userMsgs.length, 2);
+    assert.strictEqual(userMsgs[0].content, "Find Home");
+    assert.strictEqual(userMsgs[1].content, "Add coffee stop");
+
+    const assistantMsgs = capturedTurn2Messages.filter((m: any) => m.role === "assistant");
+    assert.strictEqual(assistantMsgs.length, 1);
+    assert.strictEqual(assistantMsgs[0].content, "Turn 1 final answer.");
+  });
+
+  test("15. Turn 2 retains trip context via system prompt travelPlan summary", async () => {
+    const mcpService = new MCPClientService();
+    mock.method(mcpService, "getGroqTools", async () => [
+      { type: "function", function: { name: "compare_routes", parameters: {} } }
+    ]);
+    mock.method(mcpService, "executeTool", async () => ({
+      isError: false,
+      data: {
+        feasible: true,
+        recommended: {
+          valid: true,
+          route: { distanceKm: 21.4, durationMinutes: 52 },
+          constraintEvaluations: [{ type: "avoid_tolls", severity: "hard", status: "satisfied" }]
+        }
+      }
+    }));
+
+    const sessionStore = new SessionStore();
+    const clock = new Clock();
+    const agent = new GroqAgent(mcpService, sessionStore, clock);
+
+    let systemPromptInTurn2 = "";
+    let turn = 1;
+    let round = 0;
+
+    mock.method((agent as any).groqClient.chat.completions, "create", async (params: any) => {
+      round++;
+      if (turn === 1) {
+        if (round === 1) {
+          return {
+            choices: [
+              {
+                message: {
+                  role: "assistant",
+                  tool_calls: [{
+                    id: "cmp_1",
+                    function: {
+                      name: "compare_routes",
+                      arguments: JSON.stringify({
+                        locations: [{ lat: 18.5, lon: 73.8, name: "Home" }, { lat: 18.58, lon: 73.92, name: "Airport" }],
+                        constraints: [{ type: "avoid_tolls", severity: "hard" }]
+                      })
+                    }
+                  }]
+                },
+                finish_reason: "tool_calls"
+              }
+            ]
+          };
+        } else {
+          return {
+            choices: [{ message: { role: "assistant", content: "Turn 1 route planned." }, finish_reason: "stop" }]
+          };
+        }
+      } else {
+        const sysMsg = params.messages.find((m: any) => m.role === "system");
+        systemPromptInTurn2 = sysMsg.content;
+        return {
+          choices: [{ message: { role: "assistant", content: "Turn 2 modified route." }, finish_reason: "stop" }]
+        };
+      }
+    });
+
+    await agent.converse("sys-prompt-ctx-session", "Plan route from Home to Airport avoiding tolls");
+
+    turn = 2;
+    round = 0;
+    await agent.converse("sys-prompt-ctx-session", "Add a 15-minute coffee stop");
+
+    assert.ok(systemPromptInTurn2.includes("ACTIVE TRAVEL PLAN CONTEXT:"));
+    assert.ok(systemPromptInTurn2.includes("Origin: Home"));
+    assert.ok(systemPromptInTurn2.includes("Destination: Airport"));
+    assert.ok(systemPromptInTurn2.includes("Distance: 21.4 km"));
+  });
+
+  test("16. Groq 413 / token limit error triggers safe compaction and retry", async () => {
+    const mcpService = new MCPClientService();
+    mock.method(mcpService, "getGroqTools", async () => []);
+
+    const sessionStore = new SessionStore();
+    const clock = new Clock();
+    const agent = new GroqAgent(mcpService, sessionStore, clock);
+
+    // Pre-populate session with historical conversation
+    sessionStore.updateSession("rate-limit-session", {
+      sessionId: "rate-limit-session",
+      messages: [
+        { role: "user", content: "Historical Turn 1" },
+        { role: "assistant", content: "Historical Turn 1 Response" }
+      ],
+      travelPlan: {} as any
+    });
+
+    let calls = 0;
+    let retriedMessages: any[] = [];
+    mock.method((agent as any).groqClient.chat.completions, "create", async (params: any) => {
+      calls++;
+      if (calls === 1) {
+        const err: any = new Error("413 Request too large ... Limit 8000 tokens per minute");
+        err.status = 413;
+        throw err;
+      }
+      retriedMessages = params.messages;
+      return {
+        choices: [
+          { message: { role: "assistant", content: "Recovered after compaction retry." }, finish_reason: "stop" }
+        ]
+      };
+    });
+
+    const response = await agent.converse("rate-limit-session", "Turn 2 question");
+
+    assert.strictEqual(calls, 2);
+    assert.strictEqual(response.message, "Recovered after compaction retry.");
+    // In retry, historical messages were pruned, only system prompt + current user message remained
+    assert.strictEqual(retriedMessages.length, 2);
+    assert.strictEqual(retriedMessages[0].role, "system");
+    assert.strictEqual(retriedMessages[1].role, "user");
+    assert.strictEqual(retriedMessages[1].content, "Turn 2 question");
+  });
+
+  test("17. Groq 413 / token limit error returns sanitized response when retry fails", async () => {
+    const mcpService = new MCPClientService();
+    mock.method(mcpService, "getGroqTools", async () => []);
+
+    const sessionStore = new SessionStore();
+    const clock = new Clock();
+    const agent = new GroqAgent(mcpService, sessionStore, clock);
+
+    mock.method((agent as any).groqClient.chat.completions, "create", async () => {
+      const err: any = new Error("Rate limit 429: TPM exceeded");
+      err.status = 429;
+      throw err;
+    });
+
+    const response = await agent.converse("persistent-rate-limit-session", "Test token limit");
+
+    assert.ok(response.message.includes("Route planning is temporarily experiencing high demand or token limits"));
   });
 });
 

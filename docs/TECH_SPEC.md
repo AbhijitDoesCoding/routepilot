@@ -185,6 +185,7 @@ LLM_PROVIDER=groq
 # Groq Configuration (when LLM_PROVIDER=groq)
 GROQ_API_KEY=your_groq_api_key_here
 GROQ_MODEL_ID=openai/gpt-oss-120b
+GROQ_MAX_COMPLETION_TOKENS=1200
 
 # AWS Bedrock Configuration (when LLM_PROVIDER=bedrock)
 AWS_REGION=us-east-1
@@ -206,4 +207,24 @@ RoutePilot implements a provider boundary isolating the conversational agent fro
   1. MCP tools are executed solely through `MCPClientService` over Streamable HTTP (`/mcp`).
   2. The LLM never calculates route metrics, departure times, arrival times, buffers, or stop durations.
   3. All structured `TravelPlan` properties are deterministically extracted and calculated by `updateTravelPlanFromCompareRoutes` in `src/agent/planner.ts`.
+
+## 12. Groq Context Compaction & Token-Budget Management
+To accommodate strict token-per-minute (TPM) limits on free and development tiers without sacrificing routing capabilities:
+1. **Isolated Working Messages vs. Persistent History:**
+   - Completed turns store only human user prompts and final assistant text messages in `session.messages`.
+   - Raw tool calls and voluminous tool result payloads are never persisted across conversation turns.
+   - Persistent conversational history is strictly capped at the most recent 4–6 messages.
+2. **Concise TravelPlan Ingestion:**
+   - Active trip context across conversation turns is deterministically summarized by `formatTravelPlanSummary()` and injected into the system prompt.
+   - Summaries contain only origin, destination, deadline, computed latest departure, ETA, total/driving duration, stops, active constraints, and feasibility status. No raw coordinate arrays are included.
+3. **Model-Facing Tool Payload Compaction (`compactToolResult`):**
+   - For `compare_routes`, bulky GeoJSON `LineString` coordinates (often 200–500+ coordinate pairs), encoded polylines, leg details, and step-by-step turn maneuvers are stripped before sending the result to Groq (~95% token reduction).
+   - Core metrics (distance, driving/stop durations, toll/highway indicators, constraint evaluations, and candidate IDs) are preserved for model reasoning.
+   - The application sidecar receives the uncompacted original MCP result, ensuring MapLibre GL JS renders full high-resolution route geometries.
+   - `geocode` results are bounded to top 3 matches; `find_places_along_route` to top 5 places.
+4. **Token Budget Enforcement:**
+   - Configurable `GROQ_MAX_COMPLETION_TOKENS` (default `1200`).
+5. **Compaction Retry & Error Sanitization:**
+   - On encountering HTTP 413 or 429 errors from Groq, the agent prunes historical messages from the current working array and retries once cleanly.
+   - If limits persist or no history remains to prune, a user-facing sanitized notification is returned without crashing the server or exposing internal error logs.
 

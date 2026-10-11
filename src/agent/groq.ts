@@ -3,7 +3,7 @@ import { MCPClientService } from "../mcp/client/index.js";
 import { getSystemPrompt } from "./prompts/routepilot.js";
 import { Clock } from "./clock.js";
 import { SessionStore } from "./session.js";
-import { AgentResponse, AgentContext, RoutePilotAgent } from "./types.js";
+import { AgentResponse, RoutePilotAgent, TravelPlan } from "./types.js";
 import { updateTravelPlanFromCompareRoutes } from "./planner.js";
 import pino from "pino";
 
@@ -14,12 +14,162 @@ const logger = pino({
   }
 });
 
+/**
+ * Deterministically creates a compact, text summary of the current TravelPlan.
+ * Excludes bulky route geometry coordinates to respect token budgets.
+ */
+export function formatTravelPlanSummary(plan: TravelPlan): string | null {
+  if (!plan) return null;
+  const parts: string[] = [];
+
+  if (plan.origin?.name || (typeof plan.origin?.lat === "number" && typeof plan.origin?.lon === "number")) {
+    const origStr = plan.origin.name || `${plan.origin.lat}, ${plan.origin.lon}`;
+    parts.push(`Origin: ${origStr}`);
+  }
+  if (plan.destination?.name || (typeof plan.destination?.lat === "number" && typeof plan.destination?.lon === "number")) {
+    const destStr = plan.destination.name || `${plan.destination.lat}, ${plan.destination.lon}`;
+    parts.push(`Destination: ${destStr}`);
+  }
+  if (plan.arrivalDeadline) {
+    parts.push(`Arrival Deadline: ${plan.arrivalDeadline}`);
+  }
+  if (plan.departureTime) {
+    parts.push(`Calculated Latest Departure: ${plan.departureTime}`);
+  }
+  if (plan.actualEta) {
+    parts.push(`Calculated ETA: ${plan.actualEta}`);
+  }
+  if (typeof plan.durationMinutes === "number") {
+    const driving = Math.round(plan.drivingDurationMinutes ?? plan.durationMinutes);
+    const stops = plan.stopDurationMinutes ? `, stops: ${Math.round(plan.stopDurationMinutes)} mins` : "";
+    parts.push(`Total Duration: ${Math.round(plan.durationMinutes)} mins (driving: ${driving} mins${stops})`);
+  }
+  if (typeof plan.distanceKm === "number") {
+    parts.push(`Distance: ${plan.distanceKm.toFixed(1)} km`);
+  }
+  if (plan.stops && plan.stops.length > 0) {
+    const stopStrs = plan.stops.map(s => `${s.name} (${s.durationMinutes} min stop)`);
+    parts.push(`Selected Stops: ${stopStrs.join(", ")}`);
+  }
+  if (plan.constraints && plan.constraints.length > 0) {
+    const cStrs = plan.constraints.map(c => `${c.type} (${c.severity})`);
+    parts.push(`Active Constraints: ${cStrs.join(", ")}`);
+  }
+  if (plan.warnings && plan.warnings.length > 0) {
+    parts.push(`Route Status: Infeasible - ${plan.warnings.join("; ")}`);
+  } else if (plan.distanceKm !== undefined) {
+    parts.push(`Route Status: Feasible`);
+  }
+
+  if (parts.length === 0) return null;
+  return `ACTIVE TRAVEL PLAN CONTEXT:\n${parts.map(p => `- ${p}`).join("\n")}\nUse this context for follow-up modifications (e.g. adding/removing stops, changing constraints).`;
+}
+
+/**
+ * Creates a model-facing compact representation of tool results.
+ * Strips bulky geometry coordinates, encoded polylines, legs, and maneuvers
+ * while retaining feasibility, metrics, constraint evaluations, and candidate IDs.
+ */
+export function compactToolResult(toolName: string, data: any): any {
+  if (!data || typeof data !== "object") {
+    return data;
+  }
+
+  if (toolName === "compare_routes") {
+    const compact: any = {
+      feasible: data.feasible,
+      reason: data.reason
+    };
+
+    if (data.recommended) {
+      const rec = data.recommended;
+      compact.recommended = {
+        valid: rec.valid,
+        score: rec.score,
+        route: rec.route ? {
+          candidateId: rec.route.candidateId,
+          distanceKm: rec.route.distanceKm,
+          durationMinutes: rec.route.durationMinutes,
+          drivingDurationMinutes: rec.route.drivingDurationMinutes,
+          stopDurationMinutes: rec.route.stopDurationMinutes,
+          hasToll: rec.route.hasToll,
+          hasHighway: rec.route.hasHighway,
+          costingProfile: rec.route.costingProfile
+          // OMIT coordinates, legs, maneuvers
+        } : undefined,
+        constraintEvaluations: rec.constraintEvaluations,
+        violatedConstraints: rec.violatedConstraints,
+        satisfiedConstraints: rec.satisfiedConstraints,
+        explanation: rec.explanation
+      };
+    }
+
+    if (Array.isArray(data.alternatives)) {
+      compact.alternatives = data.alternatives.map((alt: any) => ({
+        valid: alt.valid,
+        score: alt.score,
+        route: alt.route ? {
+          candidateId: alt.route.candidateId,
+          distanceKm: alt.route.distanceKm,
+          durationMinutes: alt.route.durationMinutes,
+          hasToll: alt.route.hasToll,
+          hasHighway: alt.route.hasHighway
+        } : undefined,
+        violatedConstraints: alt.violatedConstraints,
+        explanation: alt.explanation
+      }));
+    }
+
+    return compact;
+  }
+
+  if (toolName === "geocode") {
+    if (Array.isArray(data)) {
+      return data.slice(0, 3).map((item: any) => ({
+        name: item.name || item.display_name,
+        lat: item.lat,
+        lon: item.lon
+      }));
+    }
+    if (data && Array.isArray(data.results)) {
+      return {
+        results: data.results.slice(0, 3).map((item: any) => ({
+          name: item.name || item.display_name,
+          lat: item.lat,
+          lon: item.lon
+        }))
+      };
+    }
+    return data;
+  }
+
+  if (toolName === "find_places_along_route") {
+    if (data && Array.isArray(data.places)) {
+      return {
+        count: data.places.length,
+        places: data.places.slice(0, 5).map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          category: p.category,
+          lat: p.lat,
+          lon: p.lon,
+          distanceMeters: p.distanceMeters
+        }))
+      };
+    }
+    return data;
+  }
+
+  return data;
+}
+
 export class GroqAgent implements RoutePilotAgent {
   private groqClient: Groq;
   private mcpService: MCPClientService;
   private sessionStore: SessionStore;
   private clock: Clock;
   private modelId: string;
+  private maxCompletionTokens: number;
 
   constructor(
     mcpService: MCPClientService,
@@ -36,51 +186,112 @@ export class GroqAgent implements RoutePilotAgent {
     }
 
     this.modelId = process.env.GROQ_MODEL_ID || "openai/gpt-oss-120b";
+    this.maxCompletionTokens = parseInt(process.env.GROQ_MAX_COMPLETION_TOKENS || "1200", 10);
     this.groqClient = new Groq({ apiKey });
   }
 
-  /**
-   * Converse with the agent given a user prompt using Groq's tool-calling API.
-   */
   public async converse(sessionId: string, userMessage: string): Promise<AgentResponse> {
     const context = this.sessionStore.getSession(sessionId);
 
-    // Append user message
-    context.messages.push({
-      role: "user",
-      content: userMessage
-    });
+    // Filter persistent session history to ONLY pure conversational messages (no tool_calls or role: "tool")
+    const conversationalHistory = (context.messages || []).filter(
+      (m: any) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && !m.tool_calls
+    );
+
+    // Bound conversational history to the most recent 4 messages (2 prior turns)
+    let boundedHistory = conversationalHistory.slice(-4);
+
+    const defaultOrigin = process.env.DEFAULT_ORIGIN_QUERY;
+    let systemPromptText = getSystemPrompt(this.clock.nowIso(), this.clock.getTimezone(), defaultOrigin);
+
+    // Inject concise deterministic TravelPlan summary if one exists
+    const planSummary = formatTravelPlanSummary(context.travelPlan);
+    if (planSummary) {
+      systemPromptText += `\n\n${planSummary}`;
+    }
+
+    // Initialize current-turn working messages
+    const workingMessages: any[] = [
+      { role: "system", content: systemPromptText },
+      ...boundedHistory,
+      { role: "user", content: userMessage }
+    ];
 
     const tools = await this.mcpService.getGroqTools();
 
     const maxRounds = 5;
     let rounds = 0;
     let finishReason: string | undefined;
-
-    const defaultOrigin = process.env.DEFAULT_ORIGIN_QUERY;
-    const systemPromptText = getSystemPrompt(this.clock.nowIso(), this.clock.getTimezone(), defaultOrigin);
+    let finalMessageText = "";
 
     while (rounds < maxRounds) {
       rounds++;
       logger.info({ sessionId, round: rounds, modelId: this.modelId }, "Sending request to Groq");
-
-      const apiMessages = [
-        { role: "system", content: systemPromptText },
-        ...context.messages
-      ];
 
       const startTime = Date.now();
       let response: any;
       try {
         response = await this.groqClient.chat.completions.create({
           model: this.modelId,
-          messages: apiMessages as any,
+          messages: workingMessages as any,
           tools: tools.length > 0 ? (tools as any) : undefined,
-          tool_choice: tools.length > 0 ? "auto" : undefined
+          tool_choice: tools.length > 0 ? "auto" : undefined,
+          max_completion_tokens: this.maxCompletionTokens
         });
       } catch (err: any) {
-        logger.error({ sessionId, round: rounds, error: err.message }, "Groq API completion error");
-        throw err;
+        const statusCode = err.status || err.statusCode;
+        const isRateOrTokenLimit = statusCode === 413 || statusCode === 429 ||
+          (typeof err.message === "string" && (
+            err.message.includes("413") ||
+            err.message.includes("429") ||
+            err.message.toLowerCase().includes("tokens per minute") ||
+            err.message.toLowerCase().includes("request too large") ||
+            err.message.toLowerCase().includes("rate limit")
+          ));
+
+        logger.error({
+          sessionId,
+          round: rounds,
+          modelId: this.modelId,
+          statusCode,
+          isRateOrTokenLimit,
+          error: err.message
+        }, "Groq API completion error");
+
+        // If rate/token limit error and we have historical conversational messages that can be pruned:
+        if (isRateOrTokenLimit && boundedHistory.length > 0) {
+          logger.warn({ sessionId }, "Attempting safe context compaction and retry after token limit error");
+          // Remove previous conversational history, keeping system prompt, current user message and current tool messages
+          const systemMsg = workingMessages[0];
+          const currentTurnMsgs = workingMessages.slice(1 + boundedHistory.length);
+          const compactedWorking = [systemMsg, ...currentTurnMsgs];
+          boundedHistory = [];
+
+          try {
+            response = await this.groqClient.chat.completions.create({
+              model: this.modelId,
+              messages: compactedWorking as any,
+              tools: tools.length > 0 ? (tools as any) : undefined,
+              tool_choice: tools.length > 0 ? "auto" : undefined,
+              max_completion_tokens: this.maxCompletionTokens
+            });
+            workingMessages.length = 0;
+            workingMessages.push(...compactedWorking);
+          } catch (retryErr: any) {
+            logger.error({ sessionId, error: retryErr.message }, "Compacted retry also failed");
+            return {
+              message: "Route planning is temporarily experiencing high demand or token limits with Groq. Please try again in a few moments.",
+              travelPlan: context.travelPlan
+            };
+          }
+        } else if (isRateOrTokenLimit) {
+          return {
+            message: "Route planning is temporarily experiencing high demand or token limits with Groq. Please try again in a few moments.",
+            travelPlan: context.travelPlan
+          };
+        } else {
+          throw err;
+        }
       }
 
       const latency = Date.now() - startTime;
@@ -93,8 +304,12 @@ export class GroqAgent implements RoutePilotAgent {
       finishReason = choice.finish_reason;
       logger.info({ sessionId, latencyMs: latency, finishReason }, "Received response from Groq");
 
-      // Normalize assistant message into session context
-      context.messages.push({
+      if (assistantMsg.content) {
+        finalMessageText = assistantMsg.content;
+      }
+
+      // Add assistant response to working messages
+      workingMessages.push({
         role: "assistant",
         content: assistantMsg.content || null,
         tool_calls: assistantMsg.tool_calls || undefined
@@ -113,7 +328,7 @@ export class GroqAgent implements RoutePilotAgent {
             parsedArgs = typeof rawArgs === "string" ? JSON.parse(rawArgs) : (rawArgs || {});
           } catch (parseErr: any) {
             logger.error({ sessionId, toolName: fnName, rawArgs, error: parseErr.message }, "Malformed tool arguments from Groq");
-            context.messages.push({
+            workingMessages.push({
               role: "tool",
               tool_call_id: callId,
               content: JSON.stringify({ error: `Malformed tool arguments: ${parseErr.message}` })
@@ -128,19 +343,22 @@ export class GroqAgent implements RoutePilotAgent {
 
             logger.info({ sessionId, toolName: fnName, latencyMs: toolLatency, isError: result.isError }, "MCP tool execution completed");
 
-            // If compare_routes is called successfully, update TravelPlan in session
+            // Update TravelPlan with the FULL, uncompacted MCP result data
             if (fnName === "compare_routes" && !result.isError) {
               updateTravelPlanFromCompareRoutes(context.travelPlan, parsedArgs, result.data);
             }
 
-            context.messages.push({
+            // Generate compact model-facing tool payload
+            const modelData = compactToolResult(fnName, result.data);
+
+            workingMessages.push({
               role: "tool",
               tool_call_id: callId,
-              content: typeof result.data === "string" ? result.data : JSON.stringify(result.data)
+              content: typeof modelData === "string" ? modelData : JSON.stringify(modelData)
             });
           } catch (execErr: any) {
             logger.error({ sessionId, toolName: fnName, error: execErr.message }, "MCP tool execution failed");
-            context.messages.push({
+            workingMessages.push({
               role: "tool",
               tool_call_id: callId,
               content: JSON.stringify({ error: `Error executing tool: ${execErr.message}` })
@@ -153,25 +371,19 @@ export class GroqAgent implements RoutePilotAgent {
       }
     }
 
-    if (rounds >= maxRounds && (finishReason === "tool_calls" || context.messages[context.messages.length - 1]?.role === "tool")) {
+    if (rounds >= maxRounds && (finishReason === "tool_calls" || workingMessages[workingMessages.length - 1]?.role === "tool")) {
       logger.warn({ sessionId }, "Maximum tool rounds exceeded in Groq agent");
-      context.messages.push({
-        role: "assistant",
-        content: "I apologize, but I'm having trouble completing this request right now due to too many tool calls."
-      });
+      finalMessageText = "I apologize, but I'm having trouble completing this request right now due to too many tool calls.";
     }
+
+    // Persist ONLY clean conversational history (user message + final assistant text response)
+    context.messages = [
+      ...boundedHistory,
+      { role: "user", content: userMessage },
+      { role: "assistant", content: finalMessageText || "Request processed." }
+    ].slice(-6); // Bound persistent conversational history to at most 6 messages (3 turns)
 
     this.sessionStore.updateSession(sessionId, context);
-
-    // Extract the final text message
-    let finalMessageText = "";
-    for (let i = context.messages.length - 1; i >= 0; i--) {
-      const msg = context.messages[i];
-      if (msg.role === "assistant" && typeof msg.content === "string" && msg.content.trim()) {
-        finalMessageText = msg.content;
-        break;
-      }
-    }
 
     return {
       message: finalMessageText || "Request processed.",

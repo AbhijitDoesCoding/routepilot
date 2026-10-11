@@ -121,6 +121,7 @@ LLM_PROVIDER=groq
 # When LLM_PROVIDER=groq:
 GROQ_API_KEY=your_groq_api_key_here
 GROQ_MODEL_ID=openai/gpt-oss-120b
+GROQ_MAX_COMPLETION_TOKENS=1200
 
 # When LLM_PROVIDER=bedrock:
 AWS_REGION=us-east-1
@@ -140,6 +141,14 @@ RoutePilot provides a clean model-provider abstraction:
 - **Bedrock (`LLM_PROVIDER=bedrock`):** Production hackathon deployment using Amazon Bedrock Converse API (`BEDROCK_MODEL_ID`).
 
 Both providers interact with the same deterministic MCP tools (`health_check`, `geocode`, `calculate_route`, `compare_routes`, `find_places_along_route`) via Streamable HTTP. Neither provider performs arithmetic or route metrics itself.
+
+#### Groq Context Compaction & Token Budgeting
+To operate smoothly within Groq rate and token-per-minute (TPM) limits:
+- **Separated Working vs. Persistent History:** Completed turns discard verbose tool-call and raw tool-result messages from persistent session history, retaining only pure conversational user/assistant messages bounded to the most recent turns.
+- **Deterministic TravelPlan Summary:** Turn-to-turn trip context (origin, destination, deadline, latest departure, duration, stops, constraints, feasibility) is maintained concisely via the system prompt without re-sending bulky coordinate payloads.
+- **Compacted Model-Facing Tool Payloads:** `compactToolResult` strips bulky LineString coordinates, legs, and turn maneuvers before returning results to Groq (~95% token reduction on `compare_routes`), while ensuring the frontend map receives full uncompacted GeoJSON geometries via `TravelPlan`.
+- **Configurable Token Limit:** `GROQ_MAX_COMPLETION_TOKENS` (default: 1200) prevents token exhaustion on free/dev tiers.
+- **Automatic Compaction Retry:** If a rate or token limit (413/429) occurs, the agent prunes historical messages and retries once cleanly. If limits persist, a graceful sanitized message is returned.
 
 #### Frontend Configuration (Optional)
 
