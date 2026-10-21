@@ -611,6 +611,7 @@ describe("Groq Agent Loop", () => {
       distanceKm: 21.4,
       stops: [{ name: "Starbucks", durationMinutes: 15 }],
       constraints: [{ type: "avoid_tolls", severity: "hard" }],
+      warnings: ["Stop \"Starbucks\" was missing coordinates; restored them from the active plan."],
       // Bulky geometry
       routeGeometry: { type: "LineString", coordinates: [[73.8, 18.5], [73.9, 18.58]] }
     };
@@ -625,6 +626,7 @@ describe("Groq Agent Loop", () => {
     assert.ok(summary.includes("Starbucks (15 min stop)"));
     assert.ok(summary.includes("avoid_tolls (hard)"));
     assert.ok(summary.includes("Route Status: Feasible"));
+    assert.strictEqual(summary.includes("Infeasible"), false);
     // Ensure no coordinates or LineString in summary
     assert.strictEqual(summary.includes("LineString"), false);
     assert.strictEqual(summary.includes("routeGeometry"), false);
@@ -1247,7 +1249,7 @@ describe("Groq Agent Loop", () => {
                     name: "compare_routes",
                     arguments: JSON.stringify({
                       locations: [{ lat: 18.5, lon: 73.8 }, { lat: 18.53, lon: 73.85, name: "Corner Cafe" }, { lat: 18.6, lon: 73.9 }],
-                      stops: [{ locationIndex: 1, name: "Corner Cafe", durationMinutes: 15 }],
+                      stops: [{ locationIndex: 1, placeId: "cafe_1", name: "Corner Cafe", lat: 18.53, lon: 73.85, durationMinutes: 15 }],
                       constraints: [{ type: "arrival_deadline", severity: "hard", value: "2026-10-12T07:00:00Z" }]
                     })
                   }

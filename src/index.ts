@@ -55,7 +55,7 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
     const sessionId = url.searchParams.get("sessionId");
     const plan = sessionId ? sessionStore.getSession(sessionId).travelPlan : null;
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ travelPlan: plan && plan.distanceKm !== undefined ? plan : null }));
+    res.end(JSON.stringify({ travelPlan: plan && (plan.distanceKm !== undefined || plan.stale) ? plan : null }));
   } else if (req.url === "/api/tts") {
     await ttsHandler(req, res);
   } else if (req.url === "/api/chat") {

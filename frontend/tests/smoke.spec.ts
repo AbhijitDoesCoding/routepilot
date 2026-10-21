@@ -67,10 +67,11 @@ test.describe('RoutePilot Alexa+ Simulator E2E Tests', () => {
 
     await expect(page.getByText('I recommend leaving at 5:58 AM.')).toBeVisible();
     await expect(page.getByText('Home → Pune Airport')).toBeVisible();
-    await expect(page.getByText('52 min')).toBeVisible();
+    await expect(page.getByText('52 min', { exact: true })).toBeVisible();
     await expect(page.getByText('21.4 km')).toBeVisible();
     await expect(page.getByText('10 min buffer')).toBeVisible();
-    await expect(page.getByText('avoid tolls')).toBeVisible();
+    await expect(page.getByText('✓ avoid tolls', { exact: true })).toBeVisible();
+    await expect(page.locator('.maplibregl-marker')).toHaveCount(2);
     await expect(page.locator('.maplibregl-map')).toBeVisible();
   });
 
@@ -169,7 +170,10 @@ test.describe('RoutePilot Alexa+ Simulator E2E Tests', () => {
     await expect(page.getByText('Home → Café Corner → Pune Airport')).toBeVisible();
     await expect(page.getByText('15 min stop')).toBeVisible();
     await expect(page.getByText('67 min')).toBeVisible();
-    await expect(page.getByText('52 min')).toBeVisible();
+    await expect(page.getByText('52 min', { exact: true })).toBeVisible();
+    await expect(page.locator('.maplibregl-marker')).toHaveCount(3);
+    await page.locator('.maplibregl-marker').nth(2).click();
+    await expect(page.getByText('Stop 1: Café Corner')).toBeVisible();
 
     // Turn 3: Avoid highways
     await input.fill('Avoid highways too.');
@@ -177,10 +181,39 @@ test.describe('RoutePilot Alexa+ Simulator E2E Tests', () => {
     await expect(page.getByText('I updated the route to avoid highways as well.')).toBeVisible();
     await expect(page.getByText('85 min')).toBeVisible();
     await expect(page.getByText('70 min')).toBeVisible();
-    await expect(page.getByText('avoid highways')).toBeVisible();
+    await expect(page.getByText('✓ avoid highways', { exact: true })).toBeVisible();
 
     // Scenario I: Map container remains mounted throughout
     await expect(page.locator('.maplibregl-map')).toBeVisible();
+  });
+
+  test('Scenario J: stale route is labeled and keeps the last successful metrics', async ({ page }) => {
+    await page.goto('/');
+
+    await page.route('/api/chat', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          message: "The route recalculation failed, so the previous route is shown as stale.",
+          travelPlan: {
+            ...basePlan,
+            stale: true,
+            staleReason: "Routing provider unavailable"
+          }
+        })
+      });
+    });
+
+    await page.getByLabel('Message input').fill('Try that again.');
+    await page.getByRole('button', { name: 'Send message' }).click();
+
+    await expect(page.getByText('Last successful route — stale.')).toBeVisible();
+    await expect(page.getByText('Last Successful Plan (Stale)')).toBeVisible();
+    await expect(page.getByText('Routing provider unavailable')).toBeVisible();
+    await expect(page.getByText('Home → Pune Airport')).toBeVisible();
+    await expect(page.getByText('52 min', { exact: true })).toBeVisible();
+    await expect(page.locator('.maplibregl-marker')).toHaveCount(2);
   });
 
   test('Scenario E: Retry behavior on server error', async ({ page }) => {

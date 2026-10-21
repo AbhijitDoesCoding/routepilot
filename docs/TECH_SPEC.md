@@ -5,7 +5,9 @@ RoutePilot follows a clean modular architecture separating the agentic orchestra
 - **Frontend (Alexa+ Simulator):** A React/TypeScript web application providing a voice-first Alexa-like simulator, conversational chat, and interactive MapLibre GL JS map.
 - **Backend (Agent API & MCP Server):** A Node.js/TypeScript server hosting:
   - `POST /mcp`: Self-hosted MCP Server exposed via Streamable HTTP (MCP specification >= 2025-11-25) using `@modelcontextprotocol/server`.
-  - `POST /api/chat`: Conversational endpoint orchestrating Amazon Bedrock via an internal `MCPClientService`.
+  - `POST /api/chat`: Conversational endpoint orchestrating the active LLM provider (Groq for the demo; Bedrock implemented but not live-verified) via an internal `MCPClientService`.
+  - `POST /api/tts`: Groq Orpheus neural TTS endpoint with browser speech fallback on the client.
+  - `GET /api/plan?sessionId=...`: Returns the current canonical plan for early map rendering and stale-route polling.
 - **Geospatial & POI Providers:** Real deterministic services (OpenStreetMap Nominatim, Valhalla routing engine, Overpass API) abstracted behind typed provider interfaces.
 
 ## 2. Component Architecture
@@ -13,7 +15,7 @@ RoutePilot follows a clean modular architecture separating the agentic orchestra
 - **Agent Factory (`src/agent/factory.ts`):** Instantiates either `GroqAgent` (`LLM_PROVIDER=groq`) or `BedrockAgent` (`LLM_PROVIDER=bedrock`).
 - **Bedrock Agent (`src/agent/client.ts`):** Orchestrates multi-turn dialogue via the Amazon Bedrock Converse API.
 - **Groq Agent (`src/agent/groq.ts`):** Orchestrates multi-turn dialogue via Groq's official tool-calling API (`openai/gpt-oss-120b`).
-- **Shared Planner (`src/agent/planner.ts`):** Deterministic parser extracting canonical `TravelPlan` metrics from `compare_routes` tool results across all LLM providers.
+- **Shared Planner (`src/agent/planner.ts`):** Deterministic merge of active plan state into new route requests, plus canonical `TravelPlan` extraction from `compare_routes` tool results across all LLM providers. Enforces plan continuity, explicit removal semantics, stop provenance, and stale-state propagation.
 - **MCP Client (`src/mcp/client/index.ts`):** Dynamic client connecting over Streamable HTTP to discover and execute MCP tools.
 - **Constraint Engine (`src/domain/constraints.ts`):** Deterministic engine validating route candidates against hard constraints and soft preferences outside the LLM.
 - **Provider Adapters (`src/providers/`):**
@@ -29,7 +31,7 @@ routepilot/
 │   │   ├── client.ts          # BedrockAgent (Amazon Bedrock Converse API)
 │   │   ├── groq.ts            # GroqAgent (Groq tool-calling API)
 │   │   ├── factory.ts         # Agent factory selecting provider via LLM_PROVIDER
-│   │   ├── planner.ts         # Shared deterministic TravelPlan extraction
+│   │   ├── planner.ts         # Deterministic plan merge, continuity and TravelPlan extraction
 │   │   ├── clock.ts           # Deterministic time provider
 │   │   ├── session.ts         # In-memory session context
 │   │   └── types.ts           # RoutePilotAgent, TravelPlan & AgentResponse models
@@ -52,8 +54,8 @@ routepilot/
 │   │   ├── hooks/             # useRoutePilot, useSpeech (Web Speech API)
 │   │   ├── types/             # Shared API & TravelPlan types
 │   │   └── App.tsx            # Alexa+ simulator UI with voice input/output
-│   └── tests/                 # Playwright E2E smoke tests (Scenarios A-I)
-├── tests/                     # 72 automated unit, domain, Groq, and integration tests
+│   └── tests/                 # Playwright E2E smoke tests (Scenarios A-J)
+├── tests/                     # 119 automated unit, domain, Groq, continuity, and integration tests
 ├── docs/                      # PRD, TECH_SPEC, HACKATHON_CHECKLIST, DEMO_SCRIPT
 └── .env.example               # Complete environment variable template
 ```
@@ -104,12 +106,12 @@ Frontend UI (Voice output + MapLibre + Plan Card)
 
 ### `compare_routes`
 - **Purpose:** Generate alternate route candidates and evaluate them deterministically against constraints and dwell times.
-- **Input:** `{ "locations": [...], "mode": "auto", "departure_time"?: string, "stops"?: [{ "locationIndex": number, "name": string, "lat": number, "lon": number, "durationMinutes": number }], "constraints"?: [...] }`
+- **Input:** `{ "locations": [...], "mode": "auto", "departure_time"?: string, "stops"?: [{ "locationIndex": number, "placeId"?: string, "name": string, "lat": number, "lon": number, "durationMinutes": number }], "constraints"?: [...], "remove_constraints"?: string[], "clear_stops"?: boolean }`
 - **Output:** `{ "feasible": boolean, "recommended": RouteEvaluation, "alternatives": RouteEvaluation[], "reason"?: string }`
 
 ### `find_places_along_route`
-- **Purpose:** Finds real POIs (coffee shops, cafes) within a bounded corridor around calculated route geometry via Overpass API. Never fabricates places.
-- **Input:** `{ "locations": [...], "mode": "auto", "category": "coffee_shop"|"cafe", "radiusMeters"?: number, "limit"?: number }`
+- **Purpose:** Finds real POIs (coffee shops, cafes) within a bounded corridor around calculated route geometry via Overpass API. If Overpass fails, it retries within bounds and then queries Nominatim once over the same bounding box. Never fabricates places.
+- **Input:** `{ "locations": [...], "mode": "auto", "category": "coffee_shop"|"cafe", "radiusMeters"?: number, "limit"?: number, "avoid_tolls"?: boolean, "avoid_highways"?: boolean }`
 - **Output:** `{ "places": [{ "id": string, "name": string, "lat": number, "lon": number, "category": string, "distanceToRouteMeters": number }] }`
 
 ## 6. ConstraintEngine & Deterministic Mathematics
@@ -124,6 +126,7 @@ To shield the LLM from arithmetic and arbitrary path evaluation, a deterministic
   - `calculateLatestDeparture(deadline, totalDuration, buffer)`: Computes exact ISO departure timestamp.
   - `calculateArrivalTime(departure, totalDuration)`: Computes exact ETA.
   - `calculateBuffer(actualEta, deadline)`: Computes minutes before deadline (positive) or minutes late (negative).
+  - **Current deadline-first buffer:** `0` minutes. The calculated ETA equals the deadline, and `departureTime = deadline - totalDuration`. A departure-first plan instead keeps the requested departure and calculates a real buffer against the deadline.
   - **Zero LLM Arithmetic:** The LLM never computes or estimates dates or durations.
 
 ## 7. TravelPlan Data Model
@@ -145,6 +148,7 @@ interface TravelPlan {
   routeGeometry?: GeoJSON.LineString; // Rendered by MapLibre
   stops?: Array<{
     name: string;
+    placeId?: string;
     lat: number;
     lon: number;
     durationMinutes: number;
@@ -152,13 +156,17 @@ interface TravelPlan {
   warnings?: string[];
   constraints?: RouteConstraint[];
   constraintEvaluations?: ConstraintEvaluation[];
+  planningMode?: "deadline_first" | "departure_first";
+  requestedDepartureTime?: string;    // ISO-8601, departure-first plans
+  stale?: boolean;
+  staleReason?: string;
 }
 ```
 
 ## 8. Alexa+ Multimodal Experience Simulator
 The project delivers a simulated Alexa+ multimodal experience:
 - **Voice Dictation:** Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`) for hands-free queries with live listening feedback.
-- **Voice Response:** Web Speech Synthesis (`SpeechSynthesisUtterance`) to read recommendations aloud upon user request.
+- **Voice Response:** Groq Orpheus neural TTS through `POST /api/tts` (`GROQ_TTS_MODEL`, `GROQ_TTS_VOICE`), with browser `speechSynthesis` as a fallback when the endpoint is unavailable. Text interaction remains available if neither voice path works.
 - **Multimodal Visual Sidecar:**
   - `RouteMap`: MapLibre GL JS rendering dynamic GeoJSON layers, green origin marker, red destination marker, amber intermediate stop markers, and bounding-box auto-fitting. Safe text rendering avoids DOM injection vulnerabilities.
   - `TravelPlanCard`: Visual breakdown of recommended route, leave/arrive times, travel time breakdown (driving vs. stop), buffer status, and verified constraint badges (`✓`, `⚠`, `○`).
@@ -186,6 +194,8 @@ LLM_PROVIDER=groq
 GROQ_API_KEY=your_groq_api_key_here
 GROQ_MODEL_ID=openai/gpt-oss-120b
 GROQ_MAX_COMPLETION_TOKENS=1200
+GROQ_TTS_MODEL=canopylabs/orpheus-v1-english
+GROQ_TTS_VOICE=hannah
 
 # AWS Bedrock Configuration (when LLM_PROVIDER=bedrock)
 AWS_REGION=us-east-1
@@ -202,7 +212,7 @@ LOG_LEVEL=info
 ## 11. Model-Provider Abstraction
 RoutePilot implements a provider boundary isolating the conversational agent from specific LLM vendors:
 - **`GroqAgent` (`LLM_PROVIDER=groq`):** Uses Groq's official tool-calling SDK with `openai/gpt-oss-120b`. Translates RoutePilot MCP tools into standard OpenAI-compatible function specifications.
-- **`BedrockAgent` (`LLM_PROVIDER=bedrock`):** Uses Amazon Bedrock Converse API with Anthropic Claude or Amazon Nova. Translates RoutePilot MCP tools into Bedrock tool specifications.
+- **`BedrockAgent` (`LLM_PROVIDER=bedrock`):** Uses Amazon Bedrock Converse API with Anthropic Claude or Amazon Nova. Translates RoutePilot MCP tools into Bedrock tool specifications. This path is implemented but was not live-verified in the current release pass; Groq is the verified demo provider.
 - **Shared Deterministic Guarantees:** Regardless of provider:
   1. MCP tools are executed solely through `MCPClientService` over Streamable HTTP (`/mcp`).
   2. The LLM never calculates route metrics, departure times, arrival times, buffers, or stop durations.
@@ -216,7 +226,7 @@ To accommodate strict token-per-minute (TPM) limits on free and development tier
    - Persistent conversational history is strictly capped at the most recent 4–6 messages.
 2. **Concise TravelPlan Ingestion:**
    - Active trip context across conversation turns is deterministically summarized by `formatTravelPlanSummary()` and injected into the system prompt.
-   - Summaries contain only origin, destination, deadline, computed latest departure, ETA, total/driving duration, stops, active constraints, and feasibility status. No raw coordinate arrays are included.
+   - Summaries contain only origin, destination, deadline, computed latest departure, ETA, total/driving duration, stops, active constraints, planning mode, requested departure, and stale/feasibility status. No raw coordinate arrays are included.
 3. **Model-Facing Tool Payload Compaction (`compactToolResult`):**
    - For `compare_routes`, bulky GeoJSON `LineString` coordinates (often 200–500+ coordinate pairs), encoded polylines, leg details, and step-by-step turn maneuvers are stripped before sending the result to Groq (~95% token reduction).
    - Core metrics (distance, driving/stop durations, toll/highway indicators, constraint evaluations, and candidate IDs) are preserved for model reasoning.
@@ -227,4 +237,15 @@ To accommodate strict token-per-minute (TPM) limits on free and development tier
 5. **Compaction Retry & Error Sanitization:**
    - On encountering HTTP 413 or 429 errors from Groq, the agent prunes historical messages from the current working array and retries once cleanly.
    - If limits persist or no history remains to prune, a user-facing sanitized notification is returned without crashing the server or exposing internal error logs.
+
+## 13. Deterministic Plan Continuity and Stale State
+The server, not the prompt, enforces plan continuity before every `compare_routes` execution:
+1. **Inheritance:** Omitted constraints, the arrival deadline, departure-first mode, and active stops are inherited from the session's canonical `TravelPlan`. Supplied constraints are upserted by type.
+2. **Explicit removal:** `remove_constraints` removes only the named types. `clear_stops: true` removes all stops. An omitted or empty `stops` array is not an implicit deletion. On a constraint-only follow-up, a replacement stop list is ignored unless the user's message expresses stop intent, so the model cannot silently swap the selected stop.
+3. **Endpoint changes:** A new first/last location starts a new journey and does not carry prior stops. Constraints and deadline are preserved unless explicitly removed, and the user/model must rediscover stops.
+4. **Stop provenance and recovery:** New stops must match a `find_places_along_route` result by place ID or proximity when provenance exists. A replacement stop missing coordinates or dwell is completed from the active stop or a recently returned place by ID or name. If no usable replacement survives, the active stops are preserved.
+5. **Waypoint insertion:** Every active stop is inserted into the route request before the destination so the router actually visits it. Orphaned waypoints from an ignored replacement are removed.
+6. **Relative dates:** An explicit "tomorrow" or "today" in the user's message deterministically aligns the deadline date while preserving the requested time and offset.
+7. **Failed reroutes:** A `compare_routes` error marks the last successful plan `stale` while retaining its metrics and geometry. A feasible success clears `stale`. A completed infeasible result clears route metrics and is presented as infeasible, not stale.
+8. **UI propagation:** `/api/plan` exposes stale plans, `TravelPlanCard` labels them, and `RouteMap` renders retained geometry in faded amber. The next success restores the normal route rendering.
 

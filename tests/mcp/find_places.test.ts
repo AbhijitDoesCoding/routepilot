@@ -54,6 +54,40 @@ describe("find_places_along_route MCP tool", () => {
     assert.ok(!result.isError);
   });
 
+  test("propagates avoid_tolls and avoid_highways into the POI corridor route", async () => {
+    let valhallaBody: any = null;
+    mock.method(global, "fetch", async (url: string, init: any) => {
+      if (String(url).includes("8002") || String(url).includes("valhalla")) {
+        valhallaBody = JSON.parse(init.body);
+        return {
+          ok: true,
+          json: async () => ({
+            trip: {
+              summary: { length: 10, time: 600 },
+              legs: [{ shape: "...", summary: { length: 10, time: 600 }, maneuvers: [] }],
+              status: 0
+            }
+          })
+        };
+      }
+      return { ok: true, json: async () => ({ elements: [] }) };
+    });
+
+    const result = await findPlacesAlongRouteHandler({
+      locations: mockLocations,
+      mode: "auto",
+      category: "cafe",
+      radiusMeters: 500,
+      avoid_tolls: true,
+      avoid_highways: true
+    });
+
+    assert.strictEqual(!!result.isError, false);
+    assert.ok(valhallaBody, "Valhalla route request must be made");
+    assert.strictEqual(valhallaBody.costing_options.auto.use_tolls, 0);
+    assert.strictEqual(valhallaBody.costing_options.auto.use_highways, 0);
+  });
+
   test("should return isError on routing failure", async () => {
     mock.method(global, "fetch", async () => {
       throw new Error("Network failure");

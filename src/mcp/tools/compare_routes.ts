@@ -22,12 +22,14 @@ export const compareRoutesDefinition = {
     stops: z.array(
       z.object({
         locationIndex: z.number().int().min(0).describe("Index in the locations array this stop corresponds to"),
+        placeId: z.string().optional().describe("ID of the place returned by find_places_along_route, when available"),
         name: z.string(),
         lat: z.number(),
         lon: z.number(),
         durationMinutes: z.number().positive().describe("Dwell time at the stop in minutes")
       })
-    ).optional().describe("Optional intermediate stops with dwell duration"),
+    ).optional().describe("Optional intermediate stops with dwell duration. When omitted, active stops are preserved. A non-empty list replaces the active stops."),
+    clear_stops: z.boolean().optional().describe("Set true only when the user explicitly asks to remove all stops. Omitted or false preserves active stops."),
     constraints: z.array(
       z.discriminatedUnion("type", [
         z.object({ type: z.literal("avoid_tolls"), severity: z.enum(["hard", "soft"]) }),
@@ -35,7 +37,10 @@ export const compareRoutesDefinition = {
         z.object({ type: z.literal("max_walking_distance"), severity: z.enum(["hard", "soft"]), value: z.number().positive() }),
         z.object({ type: z.literal("arrival_deadline"), severity: z.enum(["hard", "soft"]), value: z.string().datetime({ offset: true }) })
       ])
-    ).optional().default([]).describe("Hard or soft constraints to evaluate candidates against")
+    ).optional().default([]).describe("Constraints to add or update. Omitted constraints are preserved; supplied constraints are upserted by type."),
+    remove_constraints: z.array(
+      z.enum(["avoid_tolls", "avoid_highways", "max_walking_distance", "arrival_deadline"])
+    ).optional().describe("Constraint types the user explicitly asked to remove. Omission means no removal.")
   })
 };
 

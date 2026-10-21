@@ -102,9 +102,14 @@ describe("OverpassProvider", () => {
   });
 
   test("two failed bounded attempts produce OverpassError with attempts=2", async () => {
-    let callCount = 0;
-    mock.method(global, "fetch", async () => {
-      callCount++;
+    let overpassCalls = 0;
+    let fallbackCalls = 0;
+    mock.method(global, "fetch", async (_input: any, init: any) => {
+      if (init?.method === "POST") {
+        overpassCalls++;
+      } else {
+        fallbackCalls++;
+      }
       return { ok: false, status: 429 };
     });
 
@@ -122,7 +127,8 @@ describe("OverpassProvider", () => {
         return true;
       }
     );
-    assert.strictEqual(callCount, 2);
+    assert.strictEqual(overpassCalls, 2);
+    assert.strictEqual(fallbackCalls, 1);
   });
 
   test("should throw on malformed response", async () => {

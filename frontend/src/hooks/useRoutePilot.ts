@@ -9,7 +9,7 @@ const sessionId = generateId(); // Unique per browser session
 // with an empty "Route Selected" card.
 const hasPlanContent = (plan?: TravelPlan | null): plan is TravelPlan =>
   !!plan && (plan.destination !== undefined || plan.distanceKm !== undefined ||
-    plan.routeGeometry !== undefined || plan.departureTime !== undefined);
+    plan.routeGeometry !== undefined || plan.departureTime !== undefined || plan.stale === true);
 
 export const useRoutePilot = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);

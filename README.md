@@ -10,6 +10,10 @@ RoutePilot implements a self-hosted **Model Context Protocol (MCP)** server over
 > RoutePilot participates in the **Alexa+ Track**. Because private-preview access to the native `@alexa-ai/cli` and Alexa+ Add-on developer toolkit is restricted, RoutePilot delivers the hackathon's officially approved alternative: a fully functional, self-hosted MCP server over Streamable HTTP paired with a high-fidelity multimodal Alexa+ experience simulator. We do NOT claim native Alexa+ device/runtime integration.
 >
 > **Note on Traffic:** Real-time live traffic feeds are **NOT** currently supported. Routing times are deterministic and based on OpenStreetMap road classifications via Valhalla.
+>
+> **Provider Status:** Groq (`openai/gpt-oss-120b`) is the active demo provider. The Amazon Bedrock Converse path is implemented behind `LLM_PROVIDER=bedrock`, but it was **not live-verified** in the current release pass.
+>
+> **Voice Output:** Assistant replies use Groq Orpheus neural TTS through `POST /api/tts` when configured. If that endpoint is unavailable, the frontend falls back to browser `speechSynthesis`.
 
 ---
 
@@ -42,12 +46,12 @@ Browser / Alexa-like Simulator (Voice & Text)
 
 ## Core Capabilities
 
-1. **Conversational Travel Planning:** Natural language interface orchestrated via Amazon Bedrock Converse API.
-2. **Deterministic Route Evaluation:** `ConstraintEngine` enforces hard constraints (e.g. `arrival_deadline`, `avoid_tolls`) and scores soft preferences outside the LLM.
-3. **Route-Aware Stop Discovery:** Discovers real OpenStreetMap POIs (cafes, coffee shops) along the computed route corridor via Overpass API without fabricating places.
-4. **Deadline-First Arithmetic:** Computes required departure times by subtracting driving duration and stop dwell times from the deadline using strictly deterministic date math. The LLM never computes travel times or departure dates.
+1. **Conversational Travel Planning:** Natural language interface orchestrated through Groq's tool-calling API for the active demo, with an implemented Amazon Bedrock Converse alternative.
+2. **Deterministic Route Evaluation:** `ConstraintEngine` enforces hard constraints (e.g. `arrival_deadline`, `avoid_tolls`, `avoid_highways`) and scores soft preferences outside the LLM.
+3. **Route-Aware Stop Discovery:** Discovers real OpenStreetMap POIs (cafes, coffee shops) along the computed route corridor via Overpass API, with a Nominatim fallback when Overpass is unavailable. It never fabricates places.
+4. **Deadline-First Arithmetic:** Computes required departure times by subtracting driving duration and stop dwell times from the deadline using strictly deterministic date math. The LLM never computes travel times or departure dates. The current implementation uses a **0-minute planning buffer** for deadline-first plans, so the calculated ETA equals the deadline.
 5. **Interactive MapLibre Map:** Visualizes origin, stops (amber markers), destination (red marker), and route geometry via GeoJSON LineStrings without requiring proprietary map tokens.
-6. **Voice Input & Output:** Web Speech API integration provides microphone dictation, listening states, and spoken audio responses.
+6. **Voice Input & Output:** Web Speech API microphone dictation plus Groq Orpheus neural TTS, with browser `speechSynthesis` as the fallback.
 
 ---
 
@@ -60,8 +64,8 @@ The RoutePilot MCP server is exposed over Streamable HTTP at `http://localhost:3
 | `health_check` | Validates MCP server connectivity and status. | None |
 | `geocode` | Geocodes human-readable queries to coordinates using OpenStreetMap Nominatim. | `query` (string) |
 | `calculate_route` | Calculates a point-to-point route via Valhalla routing engine. | `locations`, `mode`, `avoid_tolls`, `avoid_highways` |
-| `compare_routes` | Generates alternate route candidates and deterministically evaluates them against hard/soft constraints and dwell times. | `locations`, `mode`, `departure_time`, `stops`, `constraints` |
-| `find_places_along_route` | Queries Overpass API for real POIs along the computed route geometry corridor. | `locations`, `mode`, `category`, `radiusMeters`, `limit` |
+| `compare_routes` | Generates alternate route candidates and deterministically evaluates them against hard/soft constraints and dwell times. | `locations`, `mode`, `departure_time`, `stops`, `constraints`, `remove_constraints`, `clear_stops` |
+| `find_places_along_route` | Queries Overpass API for real POIs along the computed route geometry corridor, falling back to Nominatim if Overpass fails. | `locations`, `mode`, `category`, `radiusMeters`, `limit`, `avoid_tolls`, `avoid_highways` |
 
 ---
 
@@ -74,8 +78,9 @@ When a user requests a stop (e.g., *"I need to get to Pune Airport by 7 AM, avoi
 3. **Stop Selection:** The agent selects the closest real place returned by the tool (never fabricating place names or coordinates).
 4. **Recalculation:** `compare_routes` is called with the selected stop inserted into `locations` and its dwell duration included in `stops`.
 5. **Total Journey Arithmetic:** Total duration = Driving Time + Stop Dwell Time.
-6. **Latest Departure:** Deterministically calculated using `TimeUtils.calculateLatestDeparture(deadline, totalDuration)`.
-7. **Multimodal Presentation:** The frontend renders the amber stop marker on MapLibre and updates the `TravelPlanCard` breakdown.
+6. **Latest Departure:** Deterministically calculated using `TimeUtils.calculateLatestDeparture(deadline, totalDuration, buffer)` with the current 0-minute planning buffer.
+7. **Continuity:** On a follow-up that only adds or removes a constraint, the backend inherits omitted constraints, deadline, planning mode, and active stops, reinserts the stop waypoint, and recomputes the route. A constraint-only follow-up cannot silently swap the selected stop. Explicit removal uses `remove_constraints` or `clear_stops`.
+8. **Multimodal Presentation:** The frontend renders the amber stop marker on MapLibre and updates the `TravelPlanCard` breakdown.
 
 ---
 
@@ -84,7 +89,8 @@ When a user requests a stop (e.g., *"I need to get to Pune Airport by 7 AM, avoi
 ### Prerequisites
 
 - Node.js >= 20.x
-- AWS credentials configured (`AWS_REGION`, Bedrock access)
+- Groq API key for the active demo (`GROQ_API_KEY`)
+- AWS credentials only if you choose the Bedrock provider (`AWS_REGION`, Bedrock access)
 - Local or remote Valhalla instance (defaults to `http://localhost:8002` or mockable for tests)
 
 ### Installation
@@ -122,6 +128,8 @@ LLM_PROVIDER=groq
 GROQ_API_KEY=your_groq_api_key_here
 GROQ_MODEL_ID=openai/gpt-oss-120b
 GROQ_MAX_COMPLETION_TOKENS=1200
+GROQ_TTS_MODEL=canopylabs/orpheus-v1-english
+GROQ_TTS_VOICE=hannah
 
 # When LLM_PROVIDER=bedrock:
 AWS_REGION=us-east-1
@@ -137,10 +145,13 @@ LOG_LEVEL=info
 
 #### Provider Switching
 RoutePilot provides a clean model-provider abstraction:
-- **Groq (`LLM_PROVIDER=groq`):** Fast development and execution using Groq's official tool calling API (`openai/gpt-oss-120b`). Does not require AWS Bedrock credentials.
-- **Bedrock (`LLM_PROVIDER=bedrock`):** Production hackathon deployment using Amazon Bedrock Converse API (`BEDROCK_MODEL_ID`).
+- **Groq (`LLM_PROVIDER=groq`):** Active demo provider, using Groq's official tool-calling API (`openai/gpt-oss-120b`). Does not require AWS Bedrock credentials.
+- **Bedrock (`LLM_PROVIDER=bedrock`):** Implemented against the Amazon Bedrock Converse API (`BEDROCK_MODEL_ID`). This path is present but was not live-verified in the current release pass.
 
 Both providers interact with the same deterministic MCP tools (`health_check`, `geocode`, `calculate_route`, `compare_routes`, `find_places_along_route`) via Streamable HTTP. Neither provider performs arithmetic or route metrics itself.
+
+#### Neural TTS and Browser Fallback
+When `GROQ_API_KEY` is configured, `POST /api/tts` uses Groq Orpheus (`GROQ_TTS_MODEL`, default `canopylabs/orpheus-v1-english`; `GROQ_TTS_VOICE`, default `hannah`). If the endpoint returns an error, the frontend falls back to the browser's `speechSynthesis` voices. Text interaction continues to work if neither is available.
 
 #### Groq Context Compaction & Token Budgeting
 To operate smoothly within Groq rate and token-per-minute (TPM) limits:
@@ -192,12 +203,14 @@ Open `http://localhost:5173` in your browser.
 ```bash
 npm test
 ```
-Runs 60 automated tests covering:
-- Agent multi-turn conversation loop
+Runs 119 automated tests covering:
+- Agent multi-turn conversation loop and deterministic plan continuity
+- Explicit constraint and stop removal
+- Failed-reroute stale-state propagation and recovery
 - Chat API handler and error sanitization
 - ConstraintEngine evaluation and ranking
 - Stop duration and deadline arithmetic
-- Valhalla, Nominatim, and Overpass providers
+- Valhalla, Nominatim, and Overpass providers, including POI fallback behavior
 - MCP server registration and Streamable HTTP client communication
 
 ### Frontend Typecheck & Build
@@ -205,14 +218,25 @@ Runs 60 automated tests covering:
 ```bash
 cd frontend
 npm run build
+npm run lint
 ```
 
 ### Playwright E2E Smoke Tests
 
 ```bash
 cd frontend
+npx playwright install chromium
 npx playwright test
 ```
+
+The suite has 7 scenarios: initial state, route card/MapLibre rendering, the three-turn stop workflow, stale-route presentation, retry behavior, example prompts, and voice/accessibility controls.
+
+### Release Verification Status
+
+- A scripted three-turn regression is part of `npm test` and verifies that the canonical `TravelPlan` retains the deadline, toll avoidance, highway avoidance, selected café, 15-minute dwell, stop waypoint, departure, ETA, and constraint evaluations after an incomplete third turn.
+- A bounded live Groq rehearsal completed in one session: all three turns returned HTTP 200 and the final canonical plan retained the next-day 7:00 AM IST deadline, toll and highway avoidance, the selected café with its 15-minute dwell, and matching departure/ETA/duration values.
+- The browser suite was run in system Chrome in this environment and all 7 scenarios passed. The Playwright-managed Chromium download was blocked by a CDN timeout, so `npx playwright install chromium` must succeed before the default Playwright project can run locally.
+- Bedrock has not been live-verified in this release pass; Groq is the verified demo provider.
 
 ---
 

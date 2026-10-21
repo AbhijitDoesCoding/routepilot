@@ -27,17 +27,25 @@ export const findPlacesAlongRouteDefinition = {
     mode: z.enum(["auto", "pedestrian", "bicycle"]).default("auto").describe("Transport mode"),
     category: z.enum(["coffee_shop", "cafe"]).describe("Place category to search for"),
     radiusMeters: z.number().min(10).max(10000).default(1000).describe("Maximum distance from the route"),
-    limit: z.number().min(1).max(50).default(5).describe("Maximum number of places to return")
+    limit: z.number().min(1).max(50).default(5).describe("Maximum number of places to return"),
+    avoid_tolls: z.boolean().optional().describe("Use a toll-avoiding corridor route when active in the plan"),
+    avoid_highways: z.boolean().optional().describe("Use a highway-avoiding corridor route when active in the plan")
   })
 };
 
 export const findPlacesAlongRouteHandler = async (args: any) => {
   const handlerStart = Date.now();
   try {
-    const { locations, mode = "auto", category, radiusMeters = 1000, limit = 5 } = args;
-    
-    // Calculate baseline route to get geometry
-    const routeResult = await routingProvider.calculateRoute({ locations, mode });
+    const { locations, mode = "auto", category, radiusMeters = 1000, limit = 5, avoid_tolls, avoid_highways } = args;
+
+    // Calculate baseline route to get geometry, honoring the active journey constraints
+    // where the routing provider supports them (auto mode only).
+    const routeResult = await routingProvider.calculateRoute({
+      locations,
+      mode,
+      avoidTolls: mode === "auto" ? !!avoid_tolls : false,
+      avoidHighways: mode === "auto" ? !!avoid_highways : false
+    });
     
     // Find places along that geometry
     const places = await placesProvider.findPlacesAlongRoute({

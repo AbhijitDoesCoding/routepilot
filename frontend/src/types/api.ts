@@ -31,10 +31,14 @@ export interface TravelPlan {
   distanceKm?: number;
   transportMode?: string;
   routeGeometry?: any; // GeoJSON LineString
-  stops?: Array<{ name: string; lat: number; lon: number; durationMinutes: number }>;
+  stops?: Array<{ name: string; placeId?: string; lat: number; lon: number; durationMinutes: number }>;
   warnings?: string[];
   constraints?: RouteConstraint[];
   constraintEvaluations?: ConstraintEvaluation[];
+  planningMode?: "deadline_first" | "departure_first";
+  requestedDepartureTime?: string; // ISO-8601
+  stale?: boolean;
+  staleReason?: string;
 }
 
 export interface AgentResponse {

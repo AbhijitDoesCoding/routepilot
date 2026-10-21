@@ -1,5 +1,6 @@
 import { RouteConstraint } from "../domain/constraints.js";
 import { Location } from "../providers/geocoding/types.js";
+import { Place } from "../providers/places/types.js";
 
 export interface ConstraintEvaluation {
   type: string;
@@ -22,10 +23,14 @@ export interface TravelPlan {
   distanceKm?: number;
   transportMode?: string;
   routeGeometry?: any; // GeoJSON LineString
-  stops?: Array<{ name: string; lat: number; lon: number; durationMinutes: number }>;
+  stops?: Array<{ name: string; placeId?: string; lat: number; lon: number; durationMinutes: number }>;
   warnings?: string[];
   constraints?: RouteConstraint[];
   constraintEvaluations?: ConstraintEvaluation[];
+  planningMode?: "deadline_first" | "departure_first";
+  requestedDepartureTime?: string; // ISO-8601, only for departure-first planning
+  stale?: boolean;
+  staleReason?: string;
 }
 
 export interface AgentResponse {
@@ -41,4 +46,5 @@ export interface AgentContext {
   sessionId: string;
   travelPlan: TravelPlan;
   messages: any[]; // Provider message array (Bedrock Message[] or Groq/OpenAI Message[])
+  recentPlaces?: Place[]; // Bounded provenance set for selected stops (not exposed to UI)
 }

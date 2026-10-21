@@ -42,7 +42,7 @@ export const TravelPlanCard = ({ plan }: { plan: TravelPlan | null }) => {
         isViolated && "bg-red-50 text-red-700 border-red-200",
         !isSatisfied && !isViolated && "bg-gray-50 text-gray-700 border-gray-200"
       )}>
-        {renderConstraintIcon(evalData.status)} {label} {isViolated && "unavailable"}
+        {renderConstraintIcon(evalData.status)} {label} {isViolated ? "violated" : !isSatisfied ? "not evaluable" : ""}
       </div>
     );
   };
@@ -58,14 +58,28 @@ export const TravelPlanCard = ({ plan }: { plan: TravelPlan | null }) => {
     return parts.join(" → ");
   };
 
+  const hasPreviousRoute = plan.distanceKm !== undefined || plan.routeGeometry !== undefined || plan.departureTime !== undefined;
+
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm flex flex-col gap-6">
+    <div className={clsx(
+      "bg-white rounded-lg p-6 shadow-sm flex flex-col gap-6 border",
+      plan.stale ? "border-amber-400" : "border-gray-200"
+    )}>
+      {plan.stale && (
+        <div className="bg-amber-50 text-amber-900 p-3 rounded-lg text-sm border border-amber-300">
+          <strong>{hasPreviousRoute ? "Last successful route — stale." : "Route unavailable — stale."}</strong>{" "}
+          {hasPreviousRoute
+            ? "The latest recalculation failed. These times, distance, and route geometry are from the previous successful plan."
+            : "The latest recalculation failed and no current route is available."}
+          {plan.staleReason && <span> {plan.staleReason}</span>}
+        </div>
+      )}
       <div>
         <h2 className="text-xs text-gray-500 font-bold tracking-wide uppercase mb-1">
-          Recommended Plan
+          {plan.stale ? (hasPreviousRoute ? "Last Successful Plan (Stale)" : "Route Unavailable (Stale)") : "Recommended Plan"}
         </h2>
         <p className="text-lg font-bold text-gray-900 flex items-center gap-2">
-          <MapPin className="w-5 h-5 text-blue-500 shrink-0" />
+          <MapPin className={clsx("w-5 h-5 shrink-0", plan.stale ? "text-amber-500" : "text-blue-500")} />
           <span>{routeTitle()}</span>
         </p>
       </div>

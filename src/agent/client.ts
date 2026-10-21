@@ -4,7 +4,7 @@ import { getSystemPrompt } from "./prompts/routepilot.js";
 import { Clock } from "./clock.js";
 import { SessionStore } from "./session.js";
 import { AgentResponse, AgentContext, RoutePilotAgent } from "./types.js";
-import { updateTravelPlanFromCompareRoutes } from "./planner.js";
+import { updateTravelPlanFromCompareRoutes, prepareCompareRoutesInput, prepareFindPlacesInput, markTravelPlanStale } from "./planner.js";
 import { TimeUtils } from "../domain/constraints.js";
 import pino from "pino";
 
@@ -99,25 +99,60 @@ export class BedrockAgent implements RoutePilotAgent {
             logger.info({ sessionId, toolName: toolUse.name, toolUseId: toolUse.toolUseId }, "Executing MCP tool");
             
             try {
+              let effectiveInput = (toolUse.input as Record<string, any>) ?? {};
+              let mergeWarnings: string[] = [];
+              if (toolUse.name === "compare_routes") {
+                const prepared = prepareCompareRoutesInput(context.travelPlan, effectiveInput, {
+                  recentPlaces: context.recentPlaces,
+                  userMessage,
+                  now: this.clock.now(),
+                  timeZone: this.clock.getTimezone()
+                });
+                effectiveInput = prepared.input;
+                mergeWarnings = prepared.warnings;
+                if (prepared.journeyChanged) {
+                  context.recentPlaces = undefined;
+                }
+              } else if (toolUse.name === "find_places_along_route") {
+                effectiveInput = prepareFindPlacesInput(context.travelPlan, effectiveInput);
+              }
+
               const toolStart = Date.now();
-              const result = await this.mcpService.executeTool(toolUse.name!, toolUse.input as Record<string, any>);
+              const result = await this.mcpService.executeTool(toolUse.name!, effectiveInput);
               const toolLatency = Date.now() - toolStart;
-              
+
               logger.info({ sessionId, toolName: toolUse.name, latencyMs: toolLatency, isError: result.isError }, "MCP tool execution completed");
+
+              if (result.isError && toolUse.name === "compare_routes") {
+                markTravelPlanStale(
+                  context.travelPlan,
+                  result.data?.error || "The routing provider could not recalculate the route."
+                );
+              }
 
               // If compare_routes is called successfully, update TravelPlan in session
               if (toolUse.name === "compare_routes" && !result.isError) {
-                updateTravelPlanFromCompareRoutes(context.travelPlan, toolUse.input, result.data);
+                updateTravelPlanFromCompareRoutes(context.travelPlan, effectiveInput, result.data, {
+                  recentPlaces: context.recentPlaces,
+                  mergeWarnings
+                });
+              }
+
+              if (toolUse.name === "find_places_along_route" && !result.isError && Array.isArray(result.data?.places)) {
+                context.recentPlaces = result.data.places.slice(0, 20);
               }
 
               toolResults.push({
                 toolResult: {
                   toolUseId: toolUse.toolUseId,
-                  content: [{ json: result.data }],
+                  content: [{ json: mergeWarnings.length > 0 ? { ...result.data, planWarnings: mergeWarnings } : result.data }],
                   status: result.isError ? "error" : "success"
                 }
               });
             } catch (err: any) {
+              if (toolUse.name === "compare_routes") {
+                markTravelPlanStale(context.travelPlan, "The routing provider could not recalculate the route.");
+              }
               logger.error({ sessionId, toolName: toolUse.name, error: err.message }, "MCP tool execution failed");
               toolResults.push({
                 toolResult: {

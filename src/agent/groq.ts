@@ -4,7 +4,7 @@ import { getSystemPrompt } from "./prompts/routepilot.js";
 import { Clock } from "./clock.js";
 import { SessionStore } from "./session.js";
 import { AgentResponse, RoutePilotAgent, TravelPlan } from "./types.js";
-import { updateTravelPlanFromCompareRoutes } from "./planner.js";
+import { updateTravelPlanFromCompareRoutes, prepareCompareRoutesInput, prepareFindPlacesInput, markTravelPlanStale } from "./planner.js";
 import pino from "pino";
 
 const logger = pino({
@@ -33,6 +33,12 @@ export function formatTravelPlanSummary(plan: TravelPlan): string | null {
   if (plan.arrivalDeadline) {
     parts.push(`Arrival Deadline: ${plan.arrivalDeadline}`);
   }
+  if (plan.planningMode) {
+    parts.push(`Planning Mode: ${plan.planningMode}`);
+  }
+  if (plan.requestedDepartureTime) {
+    parts.push(`Requested Departure: ${plan.requestedDepartureTime}`);
+  }
   if (plan.departureTime) {
     parts.push(`Calculated Latest Departure: ${plan.departureTime}`);
   }
@@ -55,7 +61,9 @@ export function formatTravelPlanSummary(plan: TravelPlan): string | null {
     const cStrs = plan.constraints.map(c => `${c.type} (${c.severity})`);
     parts.push(`Active Constraints: ${cStrs.join(", ")}`);
   }
-  if (plan.warnings && plan.warnings.length > 0) {
+  if (plan.stale) {
+    parts.push(`Route Status: STALE - the latest recalculation failed; metrics are from the last successful route.`);
+  } else if (plan.distanceKm === undefined && plan.warnings && plan.warnings.length > 0) {
     parts.push(`Route Status: Infeasible - ${plan.warnings.join("; ")}`);
   } else if (plan.distanceKm !== undefined) {
     parts.push(`Route Status: Feasible`);
@@ -176,6 +184,9 @@ export function buildTravelPlanFallback(plan?: TravelPlan): string {
   const dist = plan.distanceKm.toFixed(1);
   const dur = Math.round(plan.durationMinutes ?? 0);
   let msg = `I have planned your route from ${orig} to ${dest}. The total distance is ${dist} km with an estimated travel time of ${dur} minutes.`;
+  if (plan.stale) {
+    msg += ` The latest route recalculation failed, so these metrics are from the last successful route and are stale.`;
+  }
   if (plan.departureTime) {
     msg += ` Recommended departure is by ${plan.departureTime}.`;
   }
@@ -365,7 +376,38 @@ export class GroqAgent implements RoutePilotAgent {
             continue;
           }
 
-          const toolSig = `${fnName}:${JSON.stringify(parsedArgs)}`;
+          let effectiveArgs = parsedArgs;
+          let mergeWarnings: string[] = [];
+          try {
+            if (fnName === "compare_routes") {
+              const prepared = prepareCompareRoutesInput(context.travelPlan, parsedArgs, {
+                recentPlaces: context.recentPlaces,
+                userMessage,
+                now: this.clock.now(),
+                timeZone: this.clock.getTimezone()
+              });
+              effectiveArgs = prepared.input;
+              mergeWarnings = prepared.warnings;
+              if (prepared.journeyChanged) {
+                context.recentPlaces = undefined;
+              }
+            } else if (fnName === "find_places_along_route") {
+              effectiveArgs = prepareFindPlacesInput(context.travelPlan, parsedArgs);
+            }
+          } catch (prepErr: any) {
+            if (fnName === "compare_routes") {
+              markTravelPlanStale(context.travelPlan, "The route request could not be prepared for recalculation.");
+            }
+            logger.error({ sessionId, toolName: fnName, error: prepErr.message }, "Failed to prepare deterministic plan input");
+            workingMessages.push({
+              role: "tool",
+              tool_call_id: callId,
+              content: JSON.stringify({ error: `Failed to prepare tool input: ${prepErr.message}` })
+            });
+            continue;
+          }
+
+          const toolSig = `${fnName}:${JSON.stringify(effectiveArgs)}`;
           if (failedToolSignatures.has(toolSig)) {
             logger.warn({ sessionId, toolName: fnName, toolSig }, "Blocking repeated identical tool call that previously failed");
             workingMessages.push({
@@ -384,7 +426,7 @@ export class GroqAgent implements RoutePilotAgent {
 
           try {
             const toolStart = Date.now();
-            const result = await this.mcpService.executeTool(fnName, parsedArgs);
+            const result = await this.mcpService.executeTool(fnName, effectiveArgs);
             const toolLatency = Date.now() - toolStart;
 
             logger.info({ sessionId, toolName: fnName, latencyMs: toolLatency, isError: result.isError }, "MCP tool execution completed");
@@ -400,15 +442,32 @@ export class GroqAgent implements RoutePilotAgent {
                 errorStatus: result.data?.status,
                 errorMessage: result.data?.error || result.data?.message
               }, "MCP tool execution returned error");
+              if (fnName === "compare_routes") {
+                markTravelPlanStale(
+                  context.travelPlan,
+                  result.data?.error || "The routing provider could not recalculate the route."
+                );
+              }
             }
 
             // Update TravelPlan with the FULL, uncompacted MCP result data
             if (fnName === "compare_routes" && !result.isError) {
-              updateTravelPlanFromCompareRoutes(context.travelPlan, parsedArgs, result.data);
+              updateTravelPlanFromCompareRoutes(context.travelPlan, effectiveArgs, result.data, {
+                recentPlaces: context.recentPlaces,
+                mergeWarnings
+              });
+            }
+
+            // Keep a bounded, per-session provenance set for stop validation.
+            if (fnName === "find_places_along_route" && !result.isError && Array.isArray(result.data?.places)) {
+              context.recentPlaces = result.data.places.slice(0, 20);
             }
 
             // Generate compact model-facing tool payload
             const modelData = compactToolResult(fnName, result.data);
+            if (mergeWarnings.length > 0 && modelData && typeof modelData === "object") {
+              (modelData as any).planWarnings = mergeWarnings;
+            }
 
             workingMessages.push({
               role: "tool",
@@ -417,6 +476,9 @@ export class GroqAgent implements RoutePilotAgent {
             });
           } catch (execErr: any) {
             failedToolSignatures.add(toolSig);
+            if (fnName === "compare_routes") {
+              markTravelPlanStale(context.travelPlan, "The routing provider could not recalculate the route.");
+            }
             logger.error({ sessionId, toolName: fnName, error: execErr.message }, "MCP tool execution failed");
             workingMessages.push({
               role: "tool",

@@ -18,17 +18,18 @@
 - **Action:** Click the microphone button or type:
   > *"I need to reach Pune Airport by 7 AM and avoid tolls."*
 - **Behind the Scenes (Explain while the plan loads):**
-  - Amazon Bedrock parses user intent and identifies destination (`Pune Airport`), deadline (`7:00 AM`), and a hard constraint (`avoid_tolls`).
-  - Bedrock executes the `geocode` MCP tool to resolve Pune Airport coordinates via OpenStreetMap Nominatim.
-  - Bedrock calls the `compare_routes` MCP tool with the `avoid_tolls` constraint.
-  - The deterministic `ConstraintEngine` generates route candidates via Valhalla, confirms toll avoidance, and calculates the exact latest departure time using `TimeUtils`.
+  - Groq parses user intent and identifies destination (`Pune Airport`), deadline (`7:00 AM`), and a hard constraint (`avoid_tolls`).
+  - The agent executes the `geocode` MCP tool to resolve Pune Airport coordinates via OpenStreetMap Nominatim.
+  - The agent calls the `compare_routes` MCP tool with the `avoid_tolls` and `arrival_deadline` constraints.
+  - The deterministic `ConstraintEngine` generates route candidates via Valhalla, confirms toll avoidance, and calculates the exact latest departure time using `TimeUtils`. The current deadline-first buffer is `0` minutes, so ETA equals the deadline.
 - **Visual Result:**
   - Route line renders on MapLibre from origin to Pune Airport.
-  - Recommended Plan card displays:
-    - Departure: `5:58 AM`
-    - Arrival: `6:50 AM` (10-minute buffer before 7:00 AM deadline)
+  - Recommended Plan card displays values returned by the tool. For example, if the chosen route is 52 minutes:
+    - Departure: `6:08 AM`
+    - Arrival: `7:00 AM` (0-minute planning buffer)
     - Travel Time: `52 min`
-    - Constraint badge: `✓ avoid tolls` (verified by backend, not guessed by LLM).
+    - Buffer: `0 min buffer`
+    - Constraint badge: `✓ avoid tolls` (verified by the backend, not guessed by the LLM).
 
 ---
 
@@ -37,20 +38,20 @@
   > *"Also find a coffee shop on the way."*
 - **Behind the Scenes (Explain):**
   - Rather than a generic city-wide search, the agent calls the `find_places_along_route` MCP tool.
-  - It queries the OpenStreetMap Overpass API for real cafes along the actual route corridor.
-  - The closest verified place (`Café Corner`) is selected.
+  - It queries the OpenStreetMap Overpass API for real cafes along the actual route corridor. If Overpass is unavailable, the provider falls back to a bounded Nominatim search over the same area.
+  - The closest verified place returned by the tool is selected; no place name is invented.
   - The agent calls `compare_routes` with the coffee stop as an intermediate waypoint and includes a 15-minute dwell time.
-  - **Deterministic Math:** The backend computes:
+  - **Deterministic Math:** For the same route, the backend computes:
     $$\text{Total Duration} = 52\text{ min (driving)} + 15\text{ min (coffee stop)} = 67\text{ min}$$
-    $$\text{Latest Departure} = 7:00\text{ AM} - 67\text{ min} - 5\text{ min buffer} = 5:48\text{ AM}$$
+    $$\text{Latest Departure} = 7:00\text{ AM} - 67\text{ min} - 0\text{ min buffer} = 5:53\text{ AM}$$
 - **Visual Result:**
   - Map updates with an amber marker for the coffee stop.
-  - Plan card title updates to: `Home → Café Corner → Pune Airport`.
+  - Plan card title updates to: `Home → Café Corner → Pune Airport` when that is the returned place name.
   - Detailed breakdown displays:
     - `Driving: 52 min`
     - `Café Corner: 15 min stop`
     - `Total: 67 min`
-    - `Buffer: 5 min buffer`
+    - `Buffer: 0 min buffer`
 
 ---
 
@@ -58,19 +59,20 @@
 - **Action:** Ask:
   > *"Avoid highways too."*
 - **Behind the Scenes (Explain):**
-  - The session preserves the origin, destination, deadline, and selected coffee stop.
-  - Bedrock re-evaluates the route with both `avoid_tolls` and `avoid_highways` enabled.
-  - A highway-free detour is generated, dwell time is preserved, and the departure time adjusts accordingly.
+  - The server-side merge policy preserves the origin, destination, deadline, both avoid constraints, and the selected coffee stop, even if the model omits them from the third tool call.
+  - The agent re-evaluates the route with both `avoid_tolls` and `avoid_highways` enabled.
+  - The stop waypoint and 15-minute dwell are reinserted deterministically before the route is calculated. If no feasible highway-free route exists, the agent reports infeasibility instead of inventing one.
 - **Visual Result:**
   - Route geometry on the map dynamically adjusts.
-  - Constraint badges now display both:
+  - Constraint badges display both:
     - `✓ avoid tolls`
     - `✓ avoid highways`
-  - Audio playback button reads the recommendation aloud using browser speech synthesis.
+  - The 15-minute café stop remains in the title and breakdown.
+  - Audio playback uses Groq Orpheus neural TTS when configured, with browser speech synthesis as the fallback.
 
 ---
 
 ### 2:20 – 2:35: Architecture & Hackathon Compliance Conclusion
 - **Presenter (Voiceover):**
-  > *"RoutePilot's foundation is a self-hosted Model Context Protocol server communicating over Streamable HTTP at `/mcp`, powering Amazon Bedrock with real Nominatim, Valhalla, and Overpass geospatial tools. Deterministic decisions, zero LLM hallucination, and a true multimodal Alexa+ experience. Thank you!"*
+  > *"RoutePilot's foundation is a self-hosted Model Context Protocol server communicating over Streamable HTTP at `/mcp`, with Groq orchestrating real Nominatim, Valhalla, and Overpass geospatial tools. Deterministic plan merging, explicit constraint removal, and stale-route handling keep the visual plan and the conversation in agreement. Thank you!"*
 - **Visual:** Briefly show the MCP server log in the terminal running tool calls over `/mcp`.

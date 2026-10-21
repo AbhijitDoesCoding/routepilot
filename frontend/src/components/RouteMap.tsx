@@ -32,6 +32,11 @@ export const RouteMap = ({ plan }: RouteMapProps) => {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
+  const latestPlan = useRef(plan);
+
+  useEffect(() => {
+    latestPlan.current = plan;
+  }, [plan]);
 
   // Initialize Map
   useEffect(() => {
@@ -64,6 +69,11 @@ export const RouteMap = ({ plan }: RouteMapProps) => {
     const currentMap = map.current;
     
     const updateMap = () => {
+      // Style-load callbacks can outlive the render that queued them. Always
+      // apply the newest plan so a later turn cannot restore stale markers.
+      const plan = latestPlan.current;
+      if (!plan) return;
+
       // Ensure the map style is fully loaded before manipulating layers/sources
       if (!currentMap.isStyleLoaded()) {
         currentMap.once("load", updateMap);
@@ -85,11 +95,14 @@ export const RouteMap = ({ plan }: RouteMapProps) => {
                 "line-cap": "round",
               },
               paint: {
-                "line-color": "#2563eb",
+                "line-color": plan.stale ? "#f59e0b" : "#2563eb",
                 "line-width": 5,
-                "line-opacity": 0.85,
+                "line-opacity": plan.stale ? 0.55 : 0.85,
               },
             });
+          } else {
+            currentMap.setPaintProperty("route", "line-color", plan.stale ? "#f59e0b" : "#2563eb");
+            currentMap.setPaintProperty("route", "line-opacity", plan.stale ? 0.55 : 0.85);
           }
         } else {
           currentMap.addSource("route", {
@@ -106,9 +119,9 @@ export const RouteMap = ({ plan }: RouteMapProps) => {
               "line-cap": "round",
             },
             paint: {
-              "line-color": "#2563eb",
+              "line-color": plan.stale ? "#f59e0b" : "#2563eb",
               "line-width": 5,
-              "line-opacity": 0.85,
+              "line-opacity": plan.stale ? 0.55 : 0.85,
             },
           });
         }
