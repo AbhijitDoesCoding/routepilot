@@ -265,7 +265,7 @@ export class GroqAgent implements RoutePilotAgent {
           tools: tools.length > 0 ? (tools as any) : undefined,
           tool_choice: tools.length > 0 ? "auto" : undefined,
           max_completion_tokens: this.maxCompletionTokens
-        });
+        }, { timeout: 60_000, maxRetries: 2 });
       } catch (err: any) {
         const statusCode = err.status || err.statusCode;
         const isRateOrTokenLimit = statusCode === 413 || statusCode === 429 ||
@@ -302,7 +302,7 @@ export class GroqAgent implements RoutePilotAgent {
               tools: tools.length > 0 ? (tools as any) : undefined,
               tool_choice: tools.length > 0 ? "auto" : undefined,
               max_completion_tokens: this.maxCompletionTokens
-            });
+            }, { timeout: 60_000, maxRetries: 0 });
             workingMessages.length = 0;
             workingMessages.push(...compactedWorking);
           } catch (retryErr: any) {
@@ -442,7 +442,7 @@ export class GroqAgent implements RoutePilotAgent {
           tools: undefined,
           tool_choice: "none" as any,
           max_completion_tokens: this.maxCompletionTokens
-        });
+        }, { timeout: 30_000, maxRetries: 0 });
 
         const finalChoice = finalResponse.choices && finalResponse.choices[0];
         const finalAssistantMsg = finalChoice?.message;

@@ -7,6 +7,7 @@ import { createAgent } from "./agent/factory.js";
 import { SessionStore } from "./agent/session.js";
 import { Clock } from "./agent/clock.js";
 import { createChatHandler } from "./api/chat.js";
+import { createTtsHandler } from "./api/tts.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
@@ -15,6 +16,9 @@ const mcpHandler = createMcpHandler(() => mcpServer);
 
 // Delay agent instantiation until the server starts listening
 let chatHandler: ((req: IncomingMessage, res: ServerResponse) => Promise<void>) | null = null;
+
+const sessionStore = new SessionStore();
+const ttsHandler = createTtsHandler();
 
 const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
   if (req.url === "/mcp") {
@@ -44,6 +48,16 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
       res.writeHead(500);
       res.end("Internal Server Error");
     }
+  } else if (req.url?.startsWith("/api/plan")) {
+    // Lets the UI show the map as soon as a route is computed, without waiting
+    // for the agent to finish its remaining tool rounds.
+    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    const sessionId = url.searchParams.get("sessionId");
+    const plan = sessionId ? sessionStore.getSession(sessionId).travelPlan : null;
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ travelPlan: plan && plan.distanceKm !== undefined ? plan : null }));
+  } else if (req.url === "/api/tts") {
+    await ttsHandler(req, res);
   } else if (req.url === "/api/chat") {
     if (!chatHandler) {
       res.writeHead(503);
@@ -68,7 +82,7 @@ server.listen(PORT, async () => {
     await mcpClient.connect();
     console.log("Internal MCP Client connected");
     
-    const agent = createAgent(mcpClient, new SessionStore(), new Clock());
+    const agent = createAgent(mcpClient, sessionStore, new Clock());
     chatHandler = createChatHandler(agent);
     console.log(`Chat API available at http://localhost:${PORT}/api/chat (Provider: ${process.env.LLM_PROVIDER || "bedrock"})`);
   } catch (err) {

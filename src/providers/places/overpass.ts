@@ -76,6 +76,97 @@ export class OverpassProvider implements PlacesProvider {
   }
 
   async findPlacesAlongRoute(request: FindPlacesRequest): Promise<Place[]> {
+    try {
+      return await this.queryOverpass(request);
+    } catch (err) {
+      // Public Overpass instances are frequently at capacity; Nominatim exposes
+      // the same OSM data and is a cheap single-request fallback.
+      const coordinates = request.routeGeometry?.coordinates;
+      if (Array.isArray(coordinates) && coordinates.length > 0) {
+        try {
+          const places = await this.findPlacesViaNominatim(
+            request.category,
+            coordinates,
+            request.radiusMeters,
+            request.limit ?? 10
+          );
+          logger.info({ provider: "Nominatim", count: places.length }, "Overpass unavailable; using Nominatim fallback");
+          return places;
+        } catch (fallbackErr: any) {
+          logger.warn({ provider: "Nominatim", error: fallbackErr?.message }, "Nominatim fallback failed");
+        }
+      }
+      throw err;
+    }
+  }
+
+  private async findPlacesViaNominatim(
+    category: string,
+    coordinates: number[][],
+    radiusMeters: number,
+    limit: number
+  ): Promise<Place[]> {
+    if (category !== "coffee_shop" && category !== "cafe") {
+      return [];
+    }
+
+    let minLat = Infinity, minLon = Infinity, maxLat = -Infinity, maxLon = -Infinity;
+    for (const [lon, lat] of coordinates) {
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lon < minLon) minLon = lon;
+      if (lon > maxLon) maxLon = lon;
+    }
+
+    const latPad = radiusMeters / 111000;
+    const lonPad = radiusMeters / (111000 * Math.cos(minLat * Math.PI / 180));
+    const url = new URL("/search", process.env.NOMINATIM_BASE_URL || "https://nominatim.openstreetmap.org");
+    url.searchParams.set("amenity", "cafe");
+    url.searchParams.set("format", "jsonv2");
+    url.searchParams.set("limit", "40");
+    url.searchParams.set("bounded", "1");
+    // Nominatim viewbox is west,north,east,south
+    url.searchParams.set("viewbox", `${minLon - lonPad},${maxLat + latPad},${maxLon + lonPad},${minLat - latPad}`);
+
+    const response = await fetch(url, {
+      headers: { "User-Agent": this.userAgent },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!response.ok) {
+      throw new Error(`Nominatim API error: ${response.status}`);
+    }
+
+    const data = await response.json() as Array<{
+      place_id: number;
+      name?: string;
+      display_name: string;
+      lat: string;
+      lon: string;
+    }>;
+
+    const places: Place[] = [];
+    for (const item of data) {
+      const lat = Number(item.lat);
+      const lon = Number(item.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const dist = distanceToLineString(lat, lon, coordinates);
+      if (dist <= radiusMeters) {
+        places.push({
+          id: String(item.place_id),
+          name: item.name || item.display_name.split(",")[0],
+          lat,
+          lon,
+          category,
+          distanceToRouteMeters: dist
+        });
+      }
+    }
+
+    places.sort((a, b) => (a.distanceToRouteMeters || 0) - (b.distanceToRouteMeters || 0));
+    return places.slice(0, limit);
+  }
+
+  private async queryOverpass(request: FindPlacesRequest): Promise<Place[]> {
     const { routeGeometry, category, radiusMeters, limit = 10 } = request;
     if (!routeGeometry || !routeGeometry.coordinates || routeGeometry.coordinates.length === 0) {
       throw new OverpassError("Invalid route geometry", "invalid_request", { retryable: false, attempts: 0 });
@@ -106,7 +197,7 @@ export class OverpassProvider implements PlacesProvider {
     const bbox = `${minLat - latPad},${minLon - lonPad},${maxLat + latPad},${maxLon + lonPad}`;
 
     const query = `
-      [out:json][timeout:25];
+      [out:json][timeout:10];
       node${tags}(${bbox});
       out body;
     `;
@@ -117,7 +208,7 @@ export class OverpassProvider implements PlacesProvider {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const attemptStart = Date.now();
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
+      const timeout = setTimeout(() => controller.abort(), 10000);
 
       try {
         const response = await fetch(this.baseUrl, {
@@ -203,7 +294,8 @@ export class OverpassProvider implements PlacesProvider {
 
         const isTimeout = err.name === "AbortError" || err.message?.includes("timeout");
         const errorCategory = isTimeout ? "timeout" : "client_error";
-        const isRetryable = isTimeout;
+        // Retrying a timeout only doubles the user-facing wait for an interactive query.
+        const isRetryable = false;
 
         logger.warn({
           toolName: "find_places_along_route",

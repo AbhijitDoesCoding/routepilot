@@ -1,11 +1,20 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRoutePilot } from "./hooks/useRoutePilot";
 import { useSpeechInput, useSpeechOutput } from "./hooks/useSpeech";
 import { RouteMap } from "./components/RouteMap";
 import { TravelPlanCard } from "./components/TravelPlanCard";
 import { MarkdownRenderer } from "./components/MarkdownRenderer";
-import { Send, Loader2, Mic, MicOff, Volume2 } from "lucide-react";
+import { Send, Loader2, Mic, MicOff, Volume2, VolumeX } from "lucide-react";
 import clsx from "clsx";
+
+const toSpeech = (text: string) =>
+  text
+    .replace(/\[(.*?)\]\(.*?\)/g, "$1")
+    .replace(/[→]/g, " to ")
+    .replace(/[*_`>#~]/g, "")
+    .replace(/^\s*[-•]\s*/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
 const EXAMPLE_PROMPTS = [
   "Get me to Pune Airport by 7 AM and avoid tolls.",
@@ -38,7 +47,18 @@ function App() {
       setInput(transcript);
     });
 
-  const { isSupported: speechOutputSupported, speak } = useSpeechOutput();
+  const { isSupported: speechOutputSupported, speak, stop: stopSpeaking } = useSpeechOutput();
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const lastSpokenId = useRef<string | null>(null);
+
+  // Alexa-style: read each new assistant reply aloud. Mark messages as seen even
+  // while muted so unmuting doesn't replay the previous reply.
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant" || last.id === lastSpokenId.current) return;
+    lastSpokenId.current = last.id;
+    if (voiceEnabled) speak(toSpeech(last.text));
+  }, [messages, voiceEnabled, speak]);
 
   const speakMessage = (text: string) => {
     speak(text);
@@ -57,8 +77,29 @@ function App() {
             <h1 className="font-bold text-lg tracking-tight text-gray-900 leading-none">RoutePilot</h1>
             <p className="text-xs text-gray-400 mt-0.5">Alexa+ Travel Assistant</p>
           </div>
+          {speechOutputSupported && (
+            <button
+              type="button"
+              onClick={() => {
+                setVoiceEnabled((v) => !v);
+                if (voiceEnabled) stopSpeaking();
+              }}
+              aria-label={voiceEnabled ? "Mute voice replies" : "Enable voice replies"}
+              aria-pressed={voiceEnabled}
+              title={voiceEnabled ? "Voice replies on — click to mute" : "Voice replies off — click to enable"}
+              className={clsx(
+                "ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400",
+                voiceEnabled
+                  ? "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100"
+                  : "bg-gray-100 text-gray-500 border-gray-200 hover:bg-gray-200"
+              )}
+            >
+              {voiceEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+              {voiceEnabled ? "Voice on" : "Muted"}
+            </button>
+          )}
           {isListening && (
-            <div className="ml-auto flex items-center gap-1.5 text-red-500 text-xs font-medium">
+            <div className={clsx("flex items-center gap-1.5 text-red-500 text-xs font-medium", !speechOutputSupported && "ml-auto")}>
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
