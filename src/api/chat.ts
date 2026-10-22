@@ -48,7 +48,19 @@ export const createChatHandler = (agent: RoutePilotAgent) => {
       }
 
       const response = await agent.converse(parsed.data.sessionId, parsed.data.message);
-      
+
+      // Provider limits are recoverable and must not look like a successful
+      // plan update to the client.
+      if (response.failureKind) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          error: response.error || "Route planning is temporarily unavailable.",
+          failureKind: response.failureKind,
+          travelPlan: response.travelPlan
+        }));
+        return;
+      }
+
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(response));
 

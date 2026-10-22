@@ -83,7 +83,7 @@ describe("Chat API", () => {
         throw new Error("Bedrock failure");
       }
     } as unknown as BedrockAgent;
-    
+
     const handler = createChatHandler(mockAgent);
     const req = createMockReq("POST", "/api/chat", {
       sessionId: randomUUID(),
@@ -92,9 +92,35 @@ describe("Chat API", () => {
     const res = createMockRes();
 
     await handler(req as any, res as any);
-    
+
     assert.strictEqual(res.statusCode, 500);
     const data = JSON.parse(res.body);
     assert.strictEqual(data.error, "Route planning is temporarily unavailable.");
+  });
+
+  test("should return a structured recoverable failure for provider limits", async () => {
+    const mockAgent = {
+      converse: async () => ({
+        message: "Provider message",
+        travelPlan: { id: "last-good" },
+        failureKind: "provider" as const,
+        error: "Route planning is temporarily busy. Your last successful route is preserved."
+      })
+    } as unknown as BedrockAgent;
+
+    const handler = createChatHandler(mockAgent);
+    const req = createMockReq("POST", "/api/chat", {
+      sessionId: randomUUID(),
+      message: "Hello"
+    });
+    const res = createMockRes();
+
+    await handler(req as any, res as any);
+
+    assert.strictEqual(res.statusCode, 503);
+    const data = JSON.parse(res.body);
+    assert.strictEqual(data.failureKind, "provider");
+    assert.strictEqual(data.error, "Route planning is temporarily busy. Your last successful route is preserved.");
+    assert.strictEqual(data.travelPlan.id, "last-good");
   });
 });

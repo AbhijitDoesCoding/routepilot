@@ -44,6 +44,8 @@ export interface TravelPlan {
 export interface AgentResponse {
   message: string;
   travelPlan?: TravelPlan;
+  failureKind?: "provider";
+  error?: string;
 }
 
 export interface ChatMessage {

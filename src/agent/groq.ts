@@ -320,13 +320,17 @@ export class GroqAgent implements RoutePilotAgent {
             logger.error({ sessionId, error: retryErr.message }, "Compacted retry also failed");
             return {
               message: "Route planning is temporarily experiencing high demand or token limits with Groq. Please try again in a few moments.",
-              travelPlan: context.travelPlan
+              travelPlan: context.travelPlan,
+              failureKind: "provider",
+              error: "Route planning is temporarily busy. Your last successful route is preserved."
             };
           }
         } else if (isRateOrTokenLimit) {
           return {
             message: "Route planning is temporarily experiencing high demand or token limits with Groq. Please try again in a few moments.",
-            travelPlan: context.travelPlan
+            travelPlan: context.travelPlan,
+            failureKind: "provider",
+            error: "Route planning is temporarily busy. Your last successful route is preserved."
           };
         } else {
           throw err;

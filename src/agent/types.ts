@@ -36,6 +36,9 @@ export interface TravelPlan {
 export interface AgentResponse {
   message: string;
   travelPlan?: TravelPlan;
+  /** Optional structured failure metadata for recoverable provider limits. */
+  failureKind?: "provider";
+  error?: string;
 }
 
 export interface RoutePilotAgent {
