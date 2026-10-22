@@ -271,6 +271,10 @@ Try these multi-turn interactions in the simulator:
 
 ---
 
+## Third-Party Licenses & Attribution
+
+RoutePilot's original code is licensed under ISC, while third-party libraries, model assets, OpenStreetMap data, and hosted services have separate licenses or terms. See [Third-Party Notices](docs/THIRD_PARTY_NOTICES.md) for the key software licenses, model/runtime notes, OpenStreetMap ODbL attribution guidance, and API policies. The notice is a curated list, not a full generated inventory of every transitive npm dependency.
+
 ## Open-Source Contributions
 
 RoutePilot's developer has also contributed to upstream open-source projects during the hackathon window. The [Open-Source Contributions index](docs/OPEN_SOURCE_CONTRIBUTIONS.md) lists the MapLibre Martin, Valhalla, Nominatim, and QubesOS pull requests with their current statuses. Merged, open, and closed-but-unmerged PRs are distinguished explicitly.
