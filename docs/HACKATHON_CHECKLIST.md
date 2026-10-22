@@ -72,14 +72,19 @@
 ## 6. Open Source Qualification
 
 - **License:** ISC License (see [LICENSE](../LICENSE))
-- **Qualifying External Open-Source Contribution:**
-  - **Contribution URL:** [QubesOS/qubes-core-admin-client #513](https://github.com/QubesOS/qubes-core-admin-client/pull/513)
-  - **Project Repository:** [https://github.com/QubesOS/qubes-core-admin-client](https://github.com/QubesOS/qubes-core-admin-client)
-  - **GitHub Username:** `AbhijitDoesCoding`
-  - **Date Submitted:** October 14, 2026 (during the hackathon submission window)
-  - **Description:** Documentation correction and regression-test contribution for a NetVM dependency chain (`qvm-shutdown: fix --wait dependency-order docs and add NetVM chain regression test`). Corrects inaccurate docs on `--wait` dependency ordering and adds unit/regression tests for shutdown chains.
-  - **Upstream PR Clarification:** Valhalla routing fixes (`AbhijitDoesCoding/valhalla` branch `investigate/6386-area-route-skips-area`) were implemented on a personal fork and are not claimed as an upstream pull request.
-- **Status:** Verified and ready for Devpost entry.
+- **GitHub Username:** `AbhijitDoesCoding`
+- **Suggested Primary Devpost Contribution:** [Valhalla #6361 — Fix valhalla_add_elevation tile validation](https://github.com/valhalla/valhalla/pull/6361). This upstream pull request was **merged on October 3, 2026** and is directly relevant to RoutePilot's Valhalla routing stack.
+- **Additional External Open-Source Contributions Submitted During the Hackathon Window:**
+  1. **[MapLibre Martin #3409 — Add CQL2 filtering for DuckDB sources](https://github.com/maplibre/martin/pull/3409)** — **Merged September 30, 2026.** Adds CQL2 filtering for DuckDB GeoParquet and table/view sources, with documentation and tests.
+  2. **[Valhalla #6361 — Fix valhalla_add_elevation tile validation](https://github.com/valhalla/valhalla/pull/6361)** — **Merged October 3, 2026.** Fixes validation of the `tiles` argument and allows valid tile inputs to proceed.
+  3. **[QubesOS/qubes-core-admin #910 — Use QubesVMInUseError for GuiVM dependencies](https://github.com/QubesOS/qubes-core-admin/pull/910)** — **Merged October 17, 2026.** Improves GuiVM dependency shutdown error handling and adds regression tests.
+  4. **[QubesOS/qubes-core-admin-client #513 — Fix --wait dependency-order docs and add NetVM chain regression test](https://github.com/QubesOS/qubes-core-admin-client/pull/513)** — **Open** as of October 23, 2026. Corrects documentation and adds a unit/regression test for a multi-level NetVM dependency chain.
+  5. **[Nominatim #4207 — Add place category when linking places](https://github.com/osm-search/Nominatim/pull/4207)** — **Closed, not merged** (October 13, 2026). Implements inherited place categories for linked places and adds regression tests.
+  6. **[Valhalla #6390 — Fix adjacent pedestrian area routing](https://github.com/valhalla/valhalla/pull/6390)** — **Closed, not merged** (October 7, 2026). Proposes connecting adjacent pedestrian areas and adds a routing regression test.
+- **Status Accuracy:** The Nominatim #4207 and Valhalla #6390 changes were submitted as upstream pull requests, even though they were not merged. They must not be described as merged. The Valhalla work is **not limited to a personal fork**: upstream PRs #6361 and #6390 exist, and #6361 was merged.
+- **Project Repository Links:** [MapLibre Martin](https://github.com/maplibre/martin), [Valhalla](https://github.com/valhalla/valhalla), [Nominatim](https://github.com/osm-search/Nominatim), [QubesOS core-admin](https://github.com/QubesOS/qubes-core-admin), and [QubesOS core-admin-client](https://github.com/QubesOS/qubes-core-admin-client).
+- **Devpost Entry Note:** If the mini-challenge form accepts only one contribution URL, use the merged Valhalla #6361 PR as the primary entry and include the other contribution links in the project story or supporting text where permitted.
+- **Status:** Contribution URLs and current PR states verified on GitHub; ready for accurate Devpost entry.
 
 ---
 
