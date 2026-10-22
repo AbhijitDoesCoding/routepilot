@@ -1,4 +1,11 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import {
+  cancelLocalSpeech,
+  generateLocalSpeech,
+  getLocalVoiceInfo,
+  prepareLocalVoice,
+} from "../lib/localVoice";
+import type { LocalVoiceStatus } from "../lib/localVoice";
 
 export interface SpeechState {
   isListening: boolean;
@@ -78,24 +85,31 @@ const getPreferredVoice = () => {
     ?? voices[0];
 };
 
-/** Browser speechSynthesis fallback when the neural TTS endpoint is unavailable. */
-const speakWithBrowser = (text: string, isStale: () => boolean) => {
-  if (!("speechSynthesis" in window)) return;
+/** Browser speechSynthesis fallback. This path never touches the network. */
+const speakWithBrowser = (text: string, isStale: () => boolean, onEnd: () => void) => {
+  if (!("speechSynthesis" in window)) {
+    onEnd();
+    return false;
+  }
   window.speechSynthesis.cancel();
 
   const run = () => {
     if (isStale()) return;
     const voice = getPreferredVoice();
     // Chrome drops very long utterances; queue sentence-sized chunks instead.
-    // Split only after punctuation followed by whitespace so decimals stay intact.
     const chunks = text.split(/(?<=[.!?])\s+/);
-    for (const chunk of chunks) {
+    chunks.forEach((chunk, index) => {
       const utterance = new SpeechSynthesisUtterance(chunk.trim());
       utterance.lang = "en-US";
       utterance.rate = 1.05;
       if (voice) utterance.voice = voice;
+      if (index === chunks.length - 1) {
+        utterance.onend = utterance.onerror = () => {
+          if (!isStale()) onEnd();
+        };
+      }
       window.speechSynthesis.speak(utterance);
-    }
+    });
   };
 
   // Voices load asynchronously in Chrome; wait briefly for them so we don't
@@ -109,56 +123,268 @@ const speakWithBrowser = (text: string, isStale: () => boolean) => {
       run();
     }, { once: true });
   }
+  return true;
+};
+
+export type VoiceMode = "local" | "browser";
+
+/**
+ * - idle/ready: nothing is being synthesized
+ * - preparing: local model is downloading/initializing
+ * - generating: Kokoro is synthesizing audio
+ * - speaking: audio is playing (local or browser)
+ * - stopped: the user muted or superseded speech
+ * - unavailable: neither local nor browser speech can play
+ */
+export type VoicePhase =
+  | "idle"
+  | "ready"
+  | "preparing"
+  | "generating"
+  | "speaking"
+  | "stopped"
+  | "unavailable";
+
+export type ActiveVoiceEngine = "local" | "browser" | null;
+
+const VOICE_MODE_KEY = "routepilot.voice-mode";
+
+const readVoiceMode = (): VoiceMode => {
+  try {
+    return window.localStorage.getItem(VOICE_MODE_KEY) === "browser" ? "browser" : "local";
+  } catch {
+    return "local";
+  }
+};
+
+const supportsBrowserSpeech = () =>
+  typeof window !== "undefined" && "speechSynthesis" in window;
+
+const sanitizeMessage = (value: unknown): string => {
+  const raw = value instanceof Error ? value.message : typeof value === "string" ? value : "";
+  return raw.replace(/\p{Cc}+/gu, " ").replace(/\s+/g, " ").trim().slice(0, 180);
 };
 
 export const useSpeechOutput = () => {
-  const [isSupported] = useState(() => typeof window !== "undefined");
+  const [voiceMode, setVoiceModeState] = useState<VoiceMode>(readVoiceMode);
+  const [phase, setPhase] = useState<VoicePhase>("idle");
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [activeEngine, setActiveEngine] = useState<ActiveVoiceEngine>(null);
+  const [localStatus, setLocalStatus] = useState<LocalVoiceStatus>(
+    () => getLocalVoiceInfo().status
+  );
+  const [prepareProgress, setPrepareProgress] = useState<{
+    progress?: number;
+    file?: string;
+  } | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [speechError, setSpeechError] = useState<string | null>(null);
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  // Bumped on stop()/new speech so a slow TTS response can't play after mute.
+  const abortRef = useRef<AbortController | null>(null);
+  // Bumped on stop()/new speech so slow model or TTS work can't play after mute.
   const generation = useRef(0);
 
-  const stop = useCallback(() => {
+  const isSupported = supportsBrowserSpeech() || typeof Worker !== "undefined";
+
+  // Release media and pending work without touching React state. This runs on
+  // unmount, including React StrictMode's dev-only mount/unmount probe, where
+  // setting "stopped" would leak into the remounted UI.
+  const releaseSpeech = useCallback(() => {
     generation.current++;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    cancelLocalSpeech();
     const audio = audioRef.current;
     if (audio) {
       audio.pause();
       audio.src = "";
       audioRef.current = null;
     }
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    if (supportsBrowserSpeech()) {
       window.speechSynthesis.cancel();
     }
   }, []);
 
-  const speak = useCallback(async (text: string) => {
-    if (!text.trim()) return;
-    stop();
-    const gen = generation.current;
-    const isStale = () => gen !== generation.current;
+  const stop = useCallback(() => {
+    releaseSpeech();
+    setIsSpeaking(false);
+    setActiveEngine(null);
+    setPhase("stopped");
+  }, [releaseSpeech]);
 
-    try {
-      const res = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+  const setVoiceMode = useCallback(
+    (mode: VoiceMode) => {
+      stop();
+      setVoiceModeState(mode);
+      setSpeechError(null);
+      setPhase(mode === "local" && localStatus === "ready" ? "ready" : "idle");
+      try {
+        window.localStorage.setItem(VOICE_MODE_KEY, mode);
+      } catch {
+        // Storage can be unavailable in private/embedded contexts.
+      }
+    },
+    [localStatus, stop]
+  );
+
+  const speakBrowserFallback = useCallback(
+    (text: string, isStale: () => boolean) => {
+      if (!supportsBrowserSpeech()) {
+        setSpeechError("Speech playback is unavailable in this browser.");
+        setPhase("unavailable");
+        setIsSpeaking(false);
+        setActiveEngine(null);
+        return;
+      }
+      setActiveEngine("browser");
+      setPhase("speaking");
+      setIsSpeaking(true);
+      const started = speakWithBrowser(text, isStale, () => {
+        if (isStale()) return;
+        setIsSpeaking(false);
+        setActiveEngine(null);
+        setPhase("ready");
       });
-      if (!res.ok) throw new Error(`TTS ${res.status}`);
-      const blob = await res.blob();
-      if (isStale()) return;
+      if (!started) {
+        setSpeechError("Speech playback is unavailable in this browser.");
+        setPhase("unavailable");
+        setIsSpeaking(false);
+        setActiveEngine(null);
+      }
+    },
+    []
+  );
 
+  const playLocalBlob = useCallback(
+    async (blob: Blob, text: string, isStale: () => boolean) => {
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audioRef.current = audio;
       audio.onended = audio.onerror = () => {
         URL.revokeObjectURL(url);
         if (audioRef.current === audio) audioRef.current = null;
+        if (isStale()) return;
+        setIsSpeaking(false);
+        setActiveEngine(null);
+        setPhase("ready");
       };
-      await audio.play();
-    } catch {
-      if (!isStale()) speakWithBrowser(text, isStale);
-    }
-  }, [stop]);
 
-  return { isSupported, speak, stop };
+      setActiveEngine("local");
+      setPhase("speaking");
+      setIsSpeaking(true);
+      try {
+        await audio.play();
+      } catch (error) {
+        URL.revokeObjectURL(url);
+        if (audioRef.current === audio) audioRef.current = null;
+        if (isStale()) return;
+        setIsSpeaking(false);
+        const message = sanitizeMessage(error) || "Browser blocked local audio playback.";
+        setLocalError(message);
+        speakBrowserFallback(text, isStale);
+      }
+    },
+    [speakBrowserFallback]
+  );
+
+  const speak = useCallback(
+    async (text: string) => {
+      if (!text.trim()) return;
+      stop();
+      const gen = generation.current;
+      const isStale = () => gen !== generation.current;
+      setSpeechError(null);
+
+      if (voiceMode === "browser") {
+        speakBrowserFallback(text, isStale);
+        return;
+      }
+
+      // A previously failed local load falls back visibly rather than retrying
+      // on every reply.
+      if (localStatus === "unavailable") {
+        setLocalError((current) => current || "On-device voice is unavailable.");
+        speakBrowserFallback(text, isStale);
+        return;
+      }
+
+      if (!("Worker" in window)) {
+        setLocalError("This browser cannot run the on-device voice worker.");
+        speakBrowserFallback(text, isStale);
+        return;
+      }
+
+      try {
+        const current = getLocalVoiceInfo();
+        if (current.status !== "ready" && current.status !== "generating") {
+          setPhase("preparing");
+          setActiveEngine(null);
+          setPrepareProgress(null);
+          const info = await prepareLocalVoice((progress) => {
+            if (isStale()) return;
+            setLocalStatus(progress.status);
+            setPrepareProgress({ progress: progress.progress, file: progress.file });
+          });
+          setLocalStatus(info.status);
+          setPrepareProgress(null);
+          if (isStale()) return;
+          if (info.status !== "ready" && info.status !== "generating") {
+            setLocalError(info.error || "On-device voice could not be initialized.");
+            speakBrowserFallback(text, isStale);
+            return;
+          }
+        }
+
+        setPhase("generating");
+        const controller = new AbortController();
+        abortRef.current = controller;
+        const blob = await generateLocalSpeech(text, {
+          signal: controller.signal,
+          onProgress: () => {
+            if (!isStale()) setPhase("generating");
+          },
+        });
+        if (isStale()) return;
+        abortRef.current = null;
+        setLocalStatus("ready");
+        await playLocalBlob(blob, text, isStale);
+      } catch (error) {
+        if (isStale()) return;
+        const aborted =
+          error instanceof DOMException && error.name === "AbortError";
+        if (aborted) return;
+        const message = sanitizeMessage(error) || "On-device voice generation failed.";
+        setLocalError(message);
+        setLocalStatus(getLocalVoiceInfo().status);
+        speakBrowserFallback(text, isStale);
+      }
+    },
+    [localStatus, playLocalBlob, speakBrowserFallback, stop, voiceMode]
+  );
+
+  // Stop audio and model work when the app unmounts or the page is hidden.
+  useEffect(() => {
+    const handlePageHide = () => stop();
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      releaseSpeech();
+    };
+  }, [releaseSpeech, stop]);
+
+  return {
+    isSupported,
+    isSpeaking,
+    speak,
+    stop,
+    voiceMode,
+    setVoiceMode,
+    phase,
+    activeEngine,
+    localStatus,
+    localError,
+    speechError,
+    prepareProgress,
+  };
 };
-

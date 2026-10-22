@@ -12,6 +12,7 @@
   "dependencies": {
     "clsx": "^2.1.1",
     "dompurify": "^3.4.16",
+    "kokoro-js": "1.2.1",
     "lucide-react": "^1.52.0",
     "maplibre-gl": "^6.12.0",
     "marked": "^18.1.0",
