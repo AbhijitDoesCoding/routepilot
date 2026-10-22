@@ -10,7 +10,7 @@ type LocalDevice = "webgpu" | "wasm";
 
 type MainToWorker =
   | { type: "prepare"; requestId: number }
-  | { type: "generate"; requestId: number; text: string }
+  | { type: "generate"; requestId: number; text: string; voice?: string; speed?: number }
   | { type: "cancel"; requestId: number }
   | { type: "dispose" };
 
@@ -110,7 +110,12 @@ async function prepare(requestId: number): Promise<void> {
   }
 }
 
-async function generate(requestId: number, text: string): Promise<void> {
+async function generate(
+  requestId: number,
+  text: string,
+  voice: string = VOICE,
+  speed: number = 0.95
+): Promise<void> {
   if (!engine) {
     post({ type: "error", requestId, stage: "generate", message: "Local voice engine is not ready." });
     return;
@@ -118,7 +123,10 @@ async function generate(requestId: number, text: string): Promise<void> {
 
   activeRequests.add(requestId);
   try {
-    const audio = await engine.generate(text, { voice: VOICE });
+    const selectedVoice = voice || VOICE;
+    const selectedSpeed =
+      typeof speed === "number" && Number.isFinite(speed) && speed > 0 ? speed : 0.95;
+    const audio = await engine.generate(text, { voice: selectedVoice as any, speed: selectedSpeed });
     if (cancelledRequests.has(requestId)) return;
     // RawAudio.toBlob() returns a WAV Blob (audio/wav) in transformers v3.
     post({ type: "audio", requestId, blob: audio.toBlob() });
@@ -139,7 +147,7 @@ self.addEventListener("message", (event: MessageEvent<MainToWorker>) => {
       void prepare(message.requestId);
       break;
     case "generate":
-      void generate(message.requestId, message.text);
+      void generate(message.requestId, message.text, message.voice, message.speed);
       break;
     case "cancel":
       // Inference itself cannot be interrupted; ignore its eventual result.

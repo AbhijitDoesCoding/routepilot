@@ -20,8 +20,14 @@ App (React)
 - `kokoro-js` is imported **inside the worker** with `await import(...)`. Model weights and voice
   tensors are fetched by Transformers.js at runtime, never bundled into application JavaScript.
 - The worker is created lazily on the first spoken reply, not on page load.
-- Model: `onnx-community/Kokoro-82M-v1.0-ONNX`, dtype `q8` (ONNX `model_quantized.onnx`), voice
-  `af_heart`.
+- Model: `onnx-community/Kokoro-82M-v1.0-ONNX`, dtype `q8` (ONNX `model_quantized.onnx`).
+- Available Voice Personas:
+  - `af_bella` — Bella (Warm Copilot, default). Natural pitch rise on clauses, conversational cadence.
+  - `af_heart` — Heart (Neutral / Clear). Consistent cadence.
+  - `am_michael` — Michael (Calm Male). Deep, steady navigation copilot.
+  - Additional Kokoro voices selectable via API/options (`af_nicole`, `bf_emma`).
+- Persona preference is persisted in `localStorage` under `routepilot.kokoro-voice`.
+- Pacing is tuned to `speed: 0.95` for unhurried, intelligible navigation guidance.
 - Concurrent prepares share one attempt. Switching voices or pressing mute cancels playback and
   generation; a late worker result cannot play.
 - If local initialization or generation fails, the reply is spoken with the browser's
@@ -57,7 +63,29 @@ Model training data notes (per the Kokoro-82M model card) include permissive/pub
 some CC BY recordings. Review the upstream model cards before redistribution. RoutePilot code
 remains under the repository's existing license.
 
-## UI states
+## Spoken response formatting
+
+The text spoken aloud by the assistant is decoupled from the chat message displayed in the UI:
+- **Chat transcript (`ChatMessage.text`)**: Remains verbatim Markdown with rich formatting, bullet points, and exact links as produced by the model.
+- **Spoken audio transcript (`formatSpokenResponse(rawText, travelPlan)`)**:
+  - Strips Markdown headers, asterisks, raw URLs, and emojis.
+  - Formats ISO timestamps (`2026-10-23T06:18:00.000Z`) and 24h military times into natural 12-hour spoken speech (`6:18 AM`).
+  - Expands domain abbreviations (`km` -> `kilometers`, `min`/`mins` -> `minutes`, `h`/`hr` -> `hours`).
+  - Removes robotic conversational openers ("Sure! Here is your route:", "Certainly, I have planned...").
+  - Grounded directly in canonical `TravelPlan` facts (origin, destination, departure, arrival, duration, stops, dwell, constraints).
+  - Accurately conveys route status: explains stale cached routes truthfully and offers actionable advice for deadline violations without inventing stops or routes.
+
+## Local model evaluation: Kokoro-82M vs. Chatterbox
+
+| Dimension | Kokoro-82M (Active) | Chatterbox-Turbo / Chatterbox (Evaluation) |
+| --- | --- | --- |
+| Architecture | StyleTTS2 / ISTFTNet (82M params) | Autoregressive Decoder + Audio Codec (350M–500M params) |
+| On-Device Model Size | ~92 MB quantized (`q8`) | 1.4 GB – 2.5 GB FP16/INT8 |
+| Browser Delivery | Direct Web Worker + WebGPU / WASM (`kokoro-js`) | Python PyTorch backend or complex multi-graph ONNX + KV cache |
+| First-Turn Cold Load | ~25–30s on consumer GPU / high-speed CDN | >60–120s browser download; high mobile WebAssembly memory risk |
+| Warm Latency (Sentence) | ~3–5s on WebGPU (real-time factor < 0.6) | 4–8s on discrete GPU, >15s on CPU |
+| Acoustic Expressiveness | Natural with `af_bella` / `0.95` speed tuning | High expressiveness, but prohibitive browser footprint |
+| Recommendation | **Production standard for on-device copilot** | Recommended strictly as an optional server-side or desktop container feature |
 
 The chat composer footer exposes the actual path and phase:
 

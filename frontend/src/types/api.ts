@@ -39,6 +39,7 @@ export interface TravelPlan {
   requestedDepartureTime?: string; // ISO-8601
   stale?: boolean;
   staleReason?: string;
+  feasible?: boolean;
 }
 
 export interface AgentResponse {

@@ -148,6 +148,16 @@ export type VoicePhase =
 export type ActiveVoiceEngine = "local" | "browser" | null;
 
 const VOICE_MODE_KEY = "routepilot.voice-mode";
+const KOKORO_VOICE_KEY = "routepilot.kokoro-voice";
+export const DEFAULT_KOKORO_VOICE = "af_bella";
+
+const readKokoroVoice = (): string => {
+  try {
+    return window.localStorage.getItem(KOKORO_VOICE_KEY) || DEFAULT_KOKORO_VOICE;
+  } catch {
+    return DEFAULT_KOKORO_VOICE;
+  }
+};
 
 const readVoiceMode = (): VoiceMode => {
   try {
@@ -167,6 +177,7 @@ const sanitizeMessage = (value: unknown): string => {
 
 export const useSpeechOutput = () => {
   const [voiceMode, setVoiceModeState] = useState<VoiceMode>(readVoiceMode);
+  const [kokoroVoice, setKokoroVoiceState] = useState<string>(readKokoroVoice);
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [activeEngine, setActiveEngine] = useState<ActiveVoiceEngine>(null);
@@ -212,6 +223,15 @@ export const useSpeechOutput = () => {
     setActiveEngine(null);
     setPhase("stopped");
   }, [releaseSpeech]);
+
+  const setKokoroVoice = useCallback((voice: string) => {
+    setKokoroVoiceState(voice);
+    try {
+      window.localStorage.setItem(KOKORO_VOICE_KEY, voice);
+    } catch {
+      // Storage safety
+    }
+  }, []);
 
   const setVoiceMode = useCallback(
     (mode: VoiceMode) => {
@@ -341,6 +361,8 @@ export const useSpeechOutput = () => {
         abortRef.current = controller;
         const blob = await generateLocalSpeech(text, {
           signal: controller.signal,
+          voice: kokoroVoice,
+          speed: 0.95,
           onProgress: () => {
             if (!isStale()) setPhase("generating");
           },
@@ -360,7 +382,7 @@ export const useSpeechOutput = () => {
         speakBrowserFallback(text, isStale);
       }
     },
-    [localStatus, playLocalBlob, speakBrowserFallback, stop, voiceMode]
+    [kokoroVoice, localStatus, playLocalBlob, speakBrowserFallback, stop, voiceMode]
   );
 
   // Stop audio and model work when the app unmounts or the page is hidden.
@@ -386,5 +408,7 @@ export const useSpeechOutput = () => {
     localError,
     speechError,
     prepareProgress,
+    kokoroVoice,
+    setKokoroVoice,
   };
 };

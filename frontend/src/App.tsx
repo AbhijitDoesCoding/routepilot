@@ -7,6 +7,7 @@ import { RouteMap } from "./components/RouteMap";
 import { TravelPlanCard } from "./components/TravelPlanCard";
 import { PlanUpdateSummary } from "./components/PlanUpdateSummary";
 import { MarkdownRenderer } from "./components/MarkdownRenderer";
+import { formatSpokenResponse } from "./lib/speechFormatter";
 import {
   ArrowUpRight,
   ChevronDown,
@@ -140,6 +141,8 @@ function App() {
     localError,
     speechError,
     prepareProgress,
+    kokoroVoice,
+    setKokoroVoice,
   } = useSpeechOutput();
 
   // Alexa-style: read each new assistant reply aloud. Mark messages as seen even
@@ -148,8 +151,11 @@ function App() {
     const last = messages[messages.length - 1];
     if (!last || last.role !== "assistant" || last.id === lastSpokenId.current) return;
     lastSpokenId.current = last.id;
-    if (voiceEnabled) speak(toSpeech(last.text));
-  }, [messages, voiceEnabled, speak]);
+    if (voiceEnabled) {
+      const spoken = formatSpokenResponse(last.text, currentPlan);
+      speak(spoken);
+    }
+  }, [messages, voiceEnabled, speak, currentPlan]);
 
   const toggleVoice = () => {
     if (voiceEnabled) {
@@ -670,6 +676,21 @@ function App() {
                       >
                         <option value="local">On-device</option>
                         <option value="browser">Browser</option>
+                      </select>
+                    )}
+                    {voiceEnabled && speechOutputSupported && voiceMode === "local" && (
+                      <select
+                        aria-label="Voice persona"
+                        title="Select on-device voice copilot persona."
+                        value={kokoroVoice}
+                        onChange={(event) => setKokoroVoice(event.target.value)}
+                        className="rounded-md border border-ink-600 bg-ink-850 px-1.5 py-1 text-[10px] font-medium text-ink-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-route-400"
+                      >
+                        <option value="af_bella">Bella (Warm)</option>
+                        <option value="af_heart">Heart (Classic)</option>
+                        <option value="af_nicole">Nicole (Nav)</option>
+                        <option value="am_michael">Michael (Male)</option>
+                        <option value="bf_emma">Emma (British)</option>
                       </select>
                     )}
                     {isSpeaking && (

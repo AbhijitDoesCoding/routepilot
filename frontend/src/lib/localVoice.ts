@@ -31,11 +31,13 @@ export interface LocalVoiceProgress {
 export interface GenerateLocalSpeechOptions {
   signal?: AbortSignal;
   onProgress?: (progress: LocalVoiceProgress) => void;
+  voice?: string;
+  speed?: number;
 }
 
 type MainToWorker =
   | { type: "prepare"; requestId: number }
-  | { type: "generate"; requestId: number; text: string }
+  | { type: "generate"; requestId: number; text: string; voice?: string; speed?: number }
   | { type: "cancel"; requestId: number }
   | { type: "dispose" };
 
@@ -305,7 +307,13 @@ export function generateLocalSpeech(
     options.onProgress?.({ status: "generating" });
 
     try {
-      activeWorker.postMessage({ type: "generate", requestId, text: input } satisfies MainToWorker);
+      activeWorker.postMessage({
+        type: "generate",
+        requestId,
+        text: input,
+        voice: options.voice,
+        speed: options.speed,
+      } satisfies MainToWorker);
     } catch (error) {
       pending.delete(requestId);
       entry.cleanup();
