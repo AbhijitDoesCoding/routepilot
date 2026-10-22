@@ -145,3 +145,6 @@ vite.config.ts.timestamp-*
 # Playwright artifacts
 playwright-report/
 test-results/
+
+test-results*/
+test-screenshots/

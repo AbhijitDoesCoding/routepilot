@@ -1,123 +1,235 @@
 @import "tailwindcss";
 
-html, body, #root {
+/*
+ * RoutePilot design tokens
+ * ---------------------------------
+ * ink     — structural frame, header, conversation surface
+ * paper   — crisp neutral surfaces for the trip panel
+ * route   — cyan/teal accent reserved for the active route and primary action
+ * stop    — amber reserved for stops, warnings, and stale state
+ * signal  — semantic status colors (success / danger)
+ */
+@theme {
+  --font-sans: "Segoe UI", "SF Pro Text", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --color-ink-950: #050b12;
+  --color-ink-900: #08111b;
+  --color-ink-850: #0b1722;
+  --color-ink-800: #101d29;
+  --color-ink-700: #172836;
+  --color-ink-600: #22384a;
+  --color-ink-500: #355066;
+  --color-ink-400: #5d7891;
+  --color-ink-300: #8aa2b7;
+  --color-ink-200: #b9c9d7;
+
+  --color-paper-50: #f8fafc;
+  --color-paper-100: #f1f5f9;
+  --color-paper-200: #e4ecf2;
+  --color-paper-300: #cedae4;
+
+  --color-route-300: #67e8f9;
+  --color-route-400: #22d3ee;
+  --color-route-500: #06b6d4;
+  --color-route-600: #0891b2;
+  --color-route-700: #0e7490;
+
+  --color-stop-300: #fcd34d;
+  --color-stop-400: #fbbf24;
+  --color-stop-500: #f59e0b;
+  --color-stop-600: #d97706;
+  --color-stop-700: #b45309;
+
+  --color-signal-green: #34d399;
+  --color-signal-rose: #fb7185;
+
+  --shadow-panel: 0 1px 2px rgba(5, 11, 18, 0.06), 0 18px 48px -24px rgba(5, 11, 18, 0.42);
+  --shadow-marker: 0 2px 6px rgba(5, 11, 18, 0.28);
+}
+
+html,
+body,
+#root {
   height: 100%;
   margin: 0;
   padding: 0;
 }
 
-/* Markdown typography and table styling */
-.markdown-content p {
-  margin-top: 0.375rem;
-  margin-bottom: 0.375rem;
-  line-height: 1.5;
+body {
+  background: var(--color-ink-950);
+  color: var(--color-paper-50);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
+::selection {
+  background: rgba(34, 211, 238, 0.28);
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-route-400);
+  outline-offset: 2px;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Slim scrollbars for conversation and trip panel */
+.scroll-slim {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ink-600) transparent;
+}
+.scroll-slim::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  background: var(--color-ink-600);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.scroll-light {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-paper-300) transparent;
+}
+.scroll-light::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll-light::-webkit-scrollbar-thumb {
+  background: var(--color-paper-300);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Markdown typography inside the dark conversation surface */
+.markdown-content {
+  color: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+
+.markdown-content p {
+  margin-top: 0.4rem;
+  margin-bottom: 0.4rem;
+}
 .markdown-content p:first-child {
   margin-top: 0;
 }
-
 .markdown-content p:last-child {
   margin-bottom: 0;
 }
 
+.markdown-content ul,
+.markdown-content ol {
+  margin-top: 0.4rem;
+  margin-bottom: 0.4rem;
+  margin-left: 1.2rem;
+}
 .markdown-content ul {
   list-style-type: disc;
-  margin-left: 1.25rem;
-  margin-top: 0.375rem;
-  margin-bottom: 0.375rem;
 }
-
 .markdown-content ol {
   list-style-type: decimal;
-  margin-left: 1.25rem;
-  margin-top: 0.375rem;
-  margin-bottom: 0.375rem;
 }
-
 .markdown-content li {
-  margin-top: 0.15rem;
-  margin-bottom: 0.15rem;
+  margin-top: 0.18rem;
+  margin-bottom: 0.18rem;
+}
+.markdown-content li::marker {
+  color: var(--color-route-400);
 }
 
 .markdown-content table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
-  margin-top: 0.625rem;
-  margin-bottom: 0.625rem;
+  margin-top: 0.65rem;
+  margin-bottom: 0.65rem;
   font-size: 0.8125rem;
-  line-height: 1.25rem;
-  border-radius: 0.375rem;
+  line-height: 1.35rem;
+  border: 1px solid var(--color-ink-600);
+  border-radius: 0.5rem;
   overflow: hidden;
 }
-
 .markdown-content th {
-  border: 1px solid #d1d5db;
-  background-color: #e5e7eb;
-  padding: 0.375rem 0.625rem;
+  border: 1px solid var(--color-ink-600);
+  background-color: var(--color-ink-700);
+  padding: 0.4rem 0.6rem;
   font-weight: 600;
   text-align: left;
-  color: #1f2937;
+  color: var(--color-paper-50);
+  white-space: normal;
 }
-
 .markdown-content td {
-  border: 1px solid #e5e7eb;
-  background-color: #ffffff;
-  padding: 0.375rem 0.625rem;
-  color: #374151;
+  border: 1px solid var(--color-ink-700);
+  padding: 0.4rem 0.6rem;
+  color: var(--color-ink-200);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
-
+.markdown-content th:first-child,
+.markdown-content td:first-child {
+  width: 40%;
+  white-space: normal;
+}
 .markdown-content tr:nth-child(even) td {
-  background-color: #f9fafb;
+  background-color: rgba(16, 29, 41, 0.6);
 }
 
 .markdown-content strong,
 .markdown-content b {
   font-weight: 600;
-  color: #111827;
+  color: #fff;
 }
 
 .markdown-content code {
-  background-color: rgba(229, 231, 235, 0.85);
+  background-color: rgba(34, 56, 74, 0.72);
   padding: 0.1rem 0.35rem;
-  border-radius: 0.25rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  border-radius: 0.3rem;
+  font-family: var(--font-mono);
   font-size: 0.85em;
-  color: #1f2937;
+  color: var(--color-route-300);
 }
-
 .markdown-content pre code {
   background-color: transparent;
   padding: 0;
   color: inherit;
 }
-
 .markdown-content pre {
-  background-color: #1f2937;
-  color: #f9fafb;
+  background-color: var(--color-ink-950);
+  border: 1px solid var(--color-ink-600);
+  color: var(--color-paper-100);
   padding: 0.75rem;
   border-radius: 0.5rem;
   overflow-x: auto;
-  margin-top: 0.5rem;
-  margin-bottom: 0.5rem;
+  margin-top: 0.55rem;
+  margin-bottom: 0.55rem;
 }
 
 .markdown-content blockquote {
-  border-left: 3px solid #60a5fa;
+  border-left: 2px solid var(--color-route-500);
   padding-left: 0.75rem;
-  color: #4b5563;
+  color: var(--color-ink-200);
   font-style: italic;
-  margin: 0.5rem 0;
+  margin: 0.55rem 0;
 }
 
 .markdown-content a {
-  color: #2563eb;
+  color: var(--color-route-300);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-
 .markdown-content a:hover {
-  color: #1d4ed8;
+  color: #fff;
 }
 
 .markdown-content h1,
@@ -125,11 +237,199 @@ html, body, #root {
 .markdown-content h3,
 .markdown-content h4 {
   font-weight: 600;
-  color: #111827;
-  margin-top: 0.75rem;
+  color: #fff;
+  margin-top: 0.8rem;
   margin-bottom: 0.25rem;
 }
+.markdown-content h1 {
+  font-size: 1.15rem;
+}
+.markdown-content h2 {
+  font-size: 1.05rem;
+}
+.markdown-content h3 {
+  font-size: 0.95rem;
+}
 
-.markdown-content h1 { font-size: 1.15rem; }
-.markdown-content h2 { font-size: 1.05rem; }
-.markdown-content h3 { font-size: 0.95rem; }
+/* Map markers ------------------------------------------------------------- */
+.map-marker {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font: 700 11px/1 var(--font-sans);
+  color: #fff;
+  box-shadow: var(--shadow-marker);
+  transition: transform 180ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    box-shadow 180ms ease;
+}
+.map-marker:hover {
+  transform: scale(1.08);
+}
+.map-marker:focus-visible {
+  outline: 3px solid var(--color-route-400);
+  outline-offset: 3px;
+}
+.map-marker--origin {
+  width: 24px;
+  height: 24px;
+  background: #0f766e;
+  border: 3px solid #ccfbf1;
+  box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.45), var(--shadow-marker);
+}
+.map-marker--destination {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--color-ink-900);
+  border: 3px solid var(--color-route-300);
+}
+.map-marker--destination::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--color-route-300);
+}
+.map-marker--stop {
+  width: 30px;
+  height: 30px;
+  background: var(--color-stop-700);
+  border: 3px solid #fde68a;
+  font-size: 12px;
+}
+.map-marker--stop.is-selected {
+  transform: scale(1.14);
+  box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.28), var(--shadow-marker);
+}
+
+/* Map chrome -------------------------------------------------------------- */
+.maplibregl-popup-content {
+  background: var(--color-ink-900) !important;
+  color: var(--color-paper-50);
+  border: 1px solid var(--color-ink-600);
+  border-radius: 10px;
+  box-shadow: var(--shadow-panel);
+  padding: 9px 12px;
+  font: 500 12px/1.4 var(--font-sans);
+}
+.maplibregl-popup-anchor-top .maplibregl-popup-tip {
+  border-bottom-color: var(--color-ink-900) !important;
+}
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+  border-top-color: var(--color-ink-900) !important;
+}
+.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--color-ink-900) !important;
+}
+.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--color-ink-900) !important;
+}
+.maplibregl-popup-close-button {
+  color: var(--color-ink-300);
+  font-size: 16px;
+  padding: 2px 6px;
+}
+.maplibregl-popup-close-button:hover {
+  background: transparent;
+  color: #fff;
+}
+.maplibregl-popup-anchor-top .maplibregl-popup-tip {
+  border-bottom-color: var(--color-ink-900);
+}
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+  border-top-color: var(--color-ink-900);
+}
+.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--color-ink-900);
+}
+.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--color-ink-900);
+}
+
+.maplibregl-ctrl-group {
+  border-radius: 11px !important;
+  overflow: hidden;
+  border: 1px solid rgba(5, 11, 18, 0.08);
+  box-shadow: 0 10px 28px -14px rgba(5, 11, 18, 0.5) !important;
+}
+.maplibregl-ctrl-group button {
+  width: 36px;
+  height: 36px;
+}
+.maplibregl-ctrl-attrib {
+  font-size: 10px;
+  background: rgba(248, 250, 252, 0.82) !important;
+}
+.maplibregl-ctrl-attrib a {
+  color: var(--color-ink-700);
+}
+
+/* Motion ----------------------------------------------------------------- */
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-panel-in {
+  animation: panel-in 240ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+@keyframes status-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  80%,
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+.status-ping::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: currentColor;
+  animation: status-ping 1.6s ease-out infinite;
+}
+
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+.typing-dot {
+  animation: typing-dot 1.2s ease-in-out infinite;
+}
+.typing-dot:nth-child(2) {
+  animation-delay: 120ms;
+}
+.typing-dot:nth-child(3) {
+  animation-delay: 240ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

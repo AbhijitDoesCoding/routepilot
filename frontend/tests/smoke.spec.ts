@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Route } from '@playwright/test';
 
 const basePlan = {
   id: "plan-1",
@@ -21,7 +21,61 @@ const basePlan = {
   ]
 };
 
+const cafePlan = {
+  id: "plan-stop",
+  origin: { name: "Home", lat: 18.5, lon: 73.8 },
+  destination: { name: "Pune Airport", lat: 18.57, lon: 73.9 },
+  stops: [{ name: "Café Corner", lat: 18.535, lon: 73.875, durationMinutes: 15 }],
+  departureTime: "2026-10-07T05:43:00Z",
+  actualEta: "2026-10-07T06:55:00Z",
+  arrivalDeadline: "2026-10-07T07:00:00Z",
+  durationMinutes: 67,
+  drivingDurationMinutes: 52,
+  stopDurationMinutes: 15,
+  distanceKm: 22.1,
+  bufferMinutes: 5,
+  routeGeometry: {
+    type: "LineString",
+    coordinates: [[73.8, 18.5], [73.875, 18.535], [73.9, 18.57]]
+  },
+  constraintEvaluations: [
+    { type: "avoid_tolls", severity: "hard", status: "satisfied" }
+  ]
+};
+
+const noHighwaysPlan = {
+  ...cafePlan,
+  id: "plan-stop-nohwy",
+  departureTime: "2026-10-07T05:25:00Z",
+  durationMinutes: 85,
+  drivingDurationMinutes: 70,
+  distanceKm: 23.5,
+  constraintEvaluations: [
+    { type: "avoid_tolls", severity: "hard", status: "satisfied" },
+    { type: "avoid_highways", severity: "hard", status: "satisfied" }
+  ]
+};
+
+const fulfillJson = (route: Route, body: unknown) =>
+  route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(body),
+  });
+
+
 test.describe('RoutePilot Alexa+ Simulator E2E Tests', () => {
+  // These scenarios exercise route/chat behavior, not on-device model loading.
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      try {
+        window.localStorage.setItem('routepilot.voice-mode', 'browser');
+      } catch {
+        // Storage is optional.
+      }
+    });
+  });
+
   test('Scenario A: Initial simulator state', async ({ page }) => {
     await page.goto('/');
 
@@ -293,5 +347,132 @@ test.describe('RoutePilot Alexa+ Simulator E2E Tests', () => {
     const input = page.getByLabel('Message input');
     await expect(input).toBeVisible();
     await expect(input).toBeEnabled();
+  });
+
+  test('Scenario K: contextual actions route through the chat workflow', async ({ page }) => {
+    await page.goto('/');
+
+    const sentMessages: string[] = [];
+    await page.route('/api/chat', async route => {
+      if (route.request().method() === 'OPTIONS') {
+        return route.fulfill({ status: 200, headers: { 'Access-Control-Allow-Origin': '*' } });
+      }
+      const { message } = route.request().postDataJSON();
+      sentMessages.push(message);
+
+      if (message === 'Add a coffee stop on the way.') {
+        return fulfillJson(route, {
+          message: "I found Café Corner on your route. With a 15-minute stop, total time is 67 minutes.",
+          travelPlan: cafePlan,
+        });
+      }
+      if (message === 'Avoid highways.') {
+        return fulfillJson(route, {
+          message: "I updated the route to avoid highways as well.",
+          travelPlan: noHighwaysPlan,
+        });
+      }
+      if (message === 'Remove the current stop.') {
+        return fulfillJson(route, {
+          message: "I removed the coffee stop. The direct route takes 52 minutes.",
+          travelPlan: basePlan,
+        });
+      }
+      return fulfillJson(route, { message: "Direct route ready.", travelPlan: basePlan });
+    });
+
+    await page.getByLabel('Message input').fill('Get me to Pune Airport by 7 AM and avoid tolls.');
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await expect(page.getByText('Direct route ready.')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Add a coffee stop', exact: true }).click();
+    await expect(page.getByText('Home → Café Corner → Pune Airport')).toBeVisible();
+    await expect(page.getByText('15 min stop')).toBeVisible();
+    expect(sentMessages.at(-1)).toBe('Add a coffee stop on the way.');
+
+    await page.getByRole('button', { name: 'Avoid highways', exact: true }).click();
+    await expect(page.getByText('85 min', { exact: true })).toBeVisible();
+    await expect(page.getByText('✓ avoid highways', { exact: true })).toBeVisible();
+    expect(sentMessages.at(-1)).toBe('Avoid highways.');
+
+    await page.getByRole('button', { name: 'Remove stop', exact: true }).click();
+    await expect(page.getByText('Home → Pune Airport')).toBeVisible();
+    await expect(page.getByText('15 min stop')).toHaveCount(0);
+    expect(sentMessages.at(-1)).toBe('Remove the current stop.');
+  });
+
+  test('Scenario L: itinerary and map stop selection stay linked', async ({ page }) => {
+    await page.goto('/');
+
+    await page.route('/api/chat', async route => {
+      if (route.request().method() === 'OPTIONS') {
+        return route.fulfill({ status: 200, headers: { 'Access-Control-Allow-Origin': '*' } });
+      }
+      return fulfillJson(route, {
+        message: "I found Café Corner on your route.",
+        travelPlan: cafePlan,
+      });
+    });
+
+    await page.getByLabel('Message input').fill('Add a coffee stop.');
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await expect(page.getByText('Home → Café Corner → Pune Airport')).toBeVisible();
+
+    const stopButton = page.getByRole('button', { name: 'Select stop 1: Café Corner' });
+    await stopButton.click();
+    await expect(stopButton).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.map-marker--stop')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByText('Selected stop', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Clear stop selection' }).click();
+    await expect(stopButton).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByText('Selected stop', { exact: true })).toHaveCount(0);
+
+    // Marker click drives the same selection, so the two views cannot drift.
+    await page.locator('.map-marker--stop').click();
+    await expect(stopButton).toHaveAttribute('aria-pressed', 'true');
+
+    // Conversation collapse keeps the map mounted and restores the composer.
+    await page.getByRole('button', { name: 'Collapse conversation' }).click();
+    await expect(page.getByRole('button', { name: 'Expand conversation' })).toBeVisible();
+    await expect(page.locator('.maplibregl-map')).toBeVisible();
+    await page.getByRole('button', { name: 'Expand conversation' }).click();
+    await expect(page.getByLabel('Message input')).toBeVisible();
+  });
+
+  test('Scenario M: mobile tabs and collapsible trip sheet', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+
+    await page.route('/api/chat', async route => {
+      if (route.request().method() === 'OPTIONS') {
+        return route.fulfill({ status: 200, headers: { 'Access-Control-Allow-Origin': '*' } });
+      }
+      return fulfillJson(route, {
+        message: "I found Café Corner on your route.",
+        travelPlan: cafePlan,
+      });
+    });
+
+    await page.getByLabel('Message input').fill('Add a coffee stop.');
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await expect(page.getByText('I found Café Corner on your route.')).toBeVisible();
+
+    await expect(page.getByLabel('Chat view')).toHaveAttribute('aria-pressed', 'true');
+    await page.getByLabel('Map view').click();
+    await expect(page.getByLabel('Map view')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#conversation')).toBeHidden();
+    await expect(page.locator('#map-workspace')).toBeVisible();
+
+    // The sheet starts collapsed so the map stays dominant on small screens.
+    await expect(page.locator('#trip-summary')).toBeHidden();
+    await page.getByRole('button', { name: 'Trip details' }).click();
+    await expect(page.locator('#trip-summary')).toBeVisible();
+    await expect(page.getByText('Home → Café Corner → Pune Airport')).toBeVisible();
+    await page.getByRole('button', { name: 'Hide details' }).click();
+    await expect(page.locator('#trip-summary')).toBeHidden();
+
+    await page.getByLabel('Chat view').click();
+    await expect(page.locator('#conversation')).toBeVisible();
   });
 });
