@@ -17,7 +17,7 @@ This file documents the key direct/runtime components identified during the rele
 | React / React DOM | Frontend UI | MIT | [facebook/react](https://github.com/facebook/react) |
 | MapLibre GL JS | Interactive map rendering | BSD-3-Clause | [maplibre/maplibre-gl-js](https://github.com/maplibre/maplibre-gl-js) |
 | Lucide React | UI icons | ISC | [lucide-icons/lucide](https://github.com/lucide-icons/lucide) |
-| DOMPurify | HTML sanitization | Apache-2.0 | [cure53/DOMPurify](https://github.com/cure53/DOMPurify) |
+| DOMPurify | HTML sanitization | Apache-2.0 OR MPL-2.0 (see upstream terms) | [cure53/DOMPurify](https://github.com/cure53/DOMPurify) |
 | Marked | Markdown parsing | MIT | [markedjs/marked](https://github.com/markedjs/marked) |
 | clsx / tailwind-merge | CSS class utilities | MIT | [clsx](https://github.com/lukeed/clsx), [tailwind-merge](https://github.com/dcastil/tailwind-merge) |
 | Vite / Tailwind CSS | Frontend build and styling | MIT | [vitejs/vite](https://github.com/vitejs/vite), [tailwindlabs/tailwindcss](https://github.com/tailwindlabs/tailwindcss) |
