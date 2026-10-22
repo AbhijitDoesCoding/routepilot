@@ -271,6 +271,10 @@ Try these multi-turn interactions in the simulator:
 
 ---
 
+## Open-Source Contributions
+
+RoutePilot's developer has also contributed to upstream open-source projects during the hackathon window. The [Open-Source Contributions index](docs/OPEN_SOURCE_CONTRIBUTIONS.md) lists the MapLibre Martin, Valhalla, Nominatim, and QubesOS pull requests with their current statuses. Merged, open, and closed-but-unmerged PRs are distinguished explicitly.
+
 ## License
 
 This project is licensed under the [ISC License](LICENSE).
