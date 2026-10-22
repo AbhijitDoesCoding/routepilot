@@ -2,11 +2,11 @@
 
 ## 1. System Architecture
 RoutePilot follows a clean modular architecture separating the agentic orchestration layer from deterministic geospatial and constraint services:
-- **Frontend (Alexa+ Simulator):** A React/TypeScript web application providing a voice-first Alexa-like simulator, conversational chat, and interactive MapLibre GL JS map.
+- **Frontend (Alexa+ Simulator):** A React/TypeScript web application providing a voice-first Alexa-like simulator, conversational chat, and interactive MapLibre GL JS map. Features on-device neural TTS (Kokoro-82M ONNX via WebGPU/WASM) and browser speech fallback.
 - **Backend (Agent API & MCP Server):** A Node.js/TypeScript server hosting:
   - `POST /mcp`: Self-hosted MCP Server exposed via Streamable HTTP (MCP specification >= 2025-11-25) using `@modelcontextprotocol/server`.
   - `POST /api/chat`: Conversational endpoint orchestrating the active LLM provider (Groq for the demo; Bedrock implemented but not live-verified) via an internal `MCPClientService`.
-  - `POST /api/tts`: Groq Orpheus neural TTS endpoint with browser speech fallback on the client.
+  - `POST /api/tts`: Backward-compatibility Groq Orpheus TTS endpoint (bypassed by frontend in favor of on-device Kokoro TTS).
   - `GET /api/plan?sessionId=...`: Returns the current canonical plan for early map rendering and stale-route polling.
 - **Geospatial & POI Providers:** Real deterministic services (OpenStreetMap Nominatim, Valhalla routing engine, Overpass API) abstracted behind typed provider interfaces.
 
@@ -18,6 +18,8 @@ RoutePilot follows a clean modular architecture separating the agentic orchestra
 - **Shared Planner (`src/agent/planner.ts`):** Deterministic merge of active plan state into new route requests, plus canonical `TravelPlan` extraction from `compare_routes` tool results across all LLM providers. Enforces plan continuity, explicit removal semantics, stop provenance, and stale-state propagation.
 - **MCP Client (`src/mcp/client/index.ts`):** Dynamic client connecting over Streamable HTTP to discover and execute MCP tools.
 - **Constraint Engine (`src/domain/constraints.ts`):** Deterministic engine validating route candidates against hard constraints and soft preferences outside the LLM.
+- **Speech Formatter (`frontend/src/lib/speechFormatter.ts`):** Natural language speech normalization layer that decouples UI Markdown rendering from spoken audio instructions. Strips Markdown noise, expands navigation abbreviations (`km` -> `kilometers`), formats timestamps into natural 12-hour AM/PM times, and articulates canonical route facts.
+- **On-Device Voice Engine (`frontend/src/lib/localVoice.ts` & `kokoroTts.worker.ts`):** Client-side Web Worker running `Kokoro-82M-v1.0-ONNX` (`q8`) with WebGPU acceleration (WASM fallback). Supports configurable personas (`af_bella`, `af_heart`, `am_michael`) and pacing (`speed: 0.95`).
 - **Provider Adapters (`src/providers/`):**
   - `NominatimProvider`: Geocodes human-readable queries to geographic coordinates.
   - `ValhallaProvider`: Calculates routes and decodes precision-6 polyline geometries to GeoJSON.
@@ -50,12 +52,14 @@ routepilot/
 │   └── index.ts               # Unified HTTP server exposing /mcp and /api/chat
 ├── frontend/
 │   ├── src/
-│   │   ├── components/        # RouteMap (MapLibre), TravelPlanCard
-│   │   ├── hooks/             # useRoutePilot, useSpeech (Web Speech API)
+│   │   ├── components/        # RouteMap (MapLibre), TravelPlanCard, PlanUpdateSummary
+│   │   ├── hooks/             # useRoutePilot, useSpeech (Web Speech API + Kokoro)
+│   │   ├── lib/               # localVoice.ts, speechFormatter.ts, planDiff.ts
+│   │   ├── workers/           # kokoroTts.worker.ts (WebGPU/WASM ONNX Worker)
 │   │   ├── types/             # Shared API & TravelPlan types
 │   │   └── App.tsx            # Alexa+ simulator UI with voice input/output
-│   └── tests/                 # Playwright E2E smoke tests (Scenarios A-J)
-├── tests/                     # 119 automated unit, domain, Groq, continuity, and integration tests
+│   └── tests/                 # 93 Playwright E2E tests (smoke, voice, matrix, phase2)
+├── tests/                     # 150 automated unit, domain, Groq, continuity, and integration tests
 ├── docs/                      # PRD, TECH_SPEC, HACKATHON_CHECKLIST, DEMO_SCRIPT
 └── .env.example               # Complete environment variable template
 ```
@@ -160,13 +164,14 @@ interface TravelPlan {
   requestedDepartureTime?: string;    // ISO-8601, departure-first plans
   stale?: boolean;
   staleReason?: string;
+  feasible?: boolean;
 }
 ```
 
 ## 8. Alexa+ Multimodal Experience Simulator
 The project delivers a simulated Alexa+ multimodal experience:
 - **Voice Dictation:** Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`) for hands-free queries with live listening feedback.
-- **Voice Response:** Groq Orpheus neural TTS through `POST /api/tts` (`GROQ_TTS_MODEL`, `GROQ_TTS_VOICE`), with browser `speechSynthesis` as a fallback when the endpoint is unavailable. Text interaction remains available if neither voice path works.
+- **Voice Response:** On-device neural speech generation powered by `Kokoro-82M-v1.0-ONNX` (`q8`) running inside a dedicated Web Worker via WebGPU (WASM fallback). Normalizes speech through `speechFormatter.ts`, provides selectable copilot personas (`af_bella`, `af_heart`, `am_michael`), and falls back to browser `speechSynthesis` when on-device inference is unsupported. The legacy `POST /api/tts` endpoint remains for backward compatibility. Text interaction remains available if neither voice path works.
 - **Multimodal Visual Sidecar:**
   - `RouteMap`: MapLibre GL JS rendering dynamic GeoJSON layers, green origin marker, red destination marker, amber intermediate stop markers, and bounding-box auto-fitting. Safe text rendering avoids DOM injection vulnerabilities.
   - `TravelPlanCard`: Visual breakdown of recommended route, leave/arrive times, travel time breakdown (driving vs. stop), buffer status, and verified constraint badges (`✓`, `⚠`, `○`).

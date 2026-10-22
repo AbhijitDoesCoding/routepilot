@@ -68,7 +68,7 @@
     - `✓ avoid tolls`
     - `✓ avoid highways`
   - The 15-minute café stop remains in the title and breakdown.
-  - Audio playback uses Groq Orpheus neural TTS when configured, with browser speech synthesis as the fallback.
+  - Audio playback speaks aloud using on-device Kokoro-82M neural TTS (Warm Copilot Bella) via WebGPU, with browser speech synthesis as a fallback.
 
 ---
 

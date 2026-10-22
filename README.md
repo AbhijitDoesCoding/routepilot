@@ -13,7 +13,7 @@ RoutePilot implements a self-hosted **Model Context Protocol (MCP)** server over
 >
 > **Provider Status:** Groq (`openai/gpt-oss-120b`) is the active demo provider. The Amazon Bedrock Converse path is implemented behind `LLM_PROVIDER=bedrock`, but it was **not live-verified** in the current release pass.
 >
-> **Voice Output:** Assistant replies use Groq Orpheus neural TTS through `POST /api/tts` when configured. If that endpoint is unavailable, the frontend falls back to browser `speechSynthesis`.
+> **Voice Output:** Default assistant voice output is **Kokoro-82M neural TTS running 100% locally on-device** via a dedicated Web Worker (WebGPU with WASM fallback). The first voice turn downloads the quantized model (~92 MB) and voice tensors once, caching them in the browser. Three personas are available: Bella (`af_bella`, default warm copilot), Heart (`af_heart`, neutral/clear), and Michael (`am_michael`, calm male), with pacing tuned to `0.95`. If on-device speech is unavailable or fails to initialize, RoutePilot seamlessly falls back to browser `speechSynthesis`. The legacy `/api/tts` endpoint remains for compatibility but is not called by the current frontend voice path.
 
 ---
 
@@ -51,7 +51,7 @@ Browser / Alexa-like Simulator (Voice & Text)
 3. **Route-Aware Stop Discovery:** Discovers real OpenStreetMap POIs (cafes, coffee shops) along the computed route corridor via Overpass API, with a Nominatim fallback when Overpass is unavailable. It never fabricates places.
 4. **Deadline-First Arithmetic:** Computes required departure times by subtracting driving duration and stop dwell times from the deadline using strictly deterministic date math. The LLM never computes travel times or departure dates. The current implementation uses a **0-minute planning buffer** for deadline-first plans, so the calculated ETA equals the deadline.
 5. **Interactive MapLibre Map:** Visualizes origin, stops (amber markers), destination (red marker), and route geometry via GeoJSON LineStrings without requiring proprietary map tokens.
-6. **Voice Input & Output:** Web Speech API microphone dictation plus Groq Orpheus neural TTS, with browser `speechSynthesis` as the fallback.
+6. **Voice Input & Output:** Web Speech API microphone dictation plus on-device Kokoro-82M neural TTS (WebGPU/WASM), with browser `speechSynthesis` as the fallback. Text interaction remains fully functional if speech is unavailable.
 
 ---
 
@@ -150,8 +150,12 @@ RoutePilot provides a clean model-provider abstraction:
 
 Both providers interact with the same deterministic MCP tools (`health_check`, `geocode`, `calculate_route`, `compare_routes`, `find_places_along_route`) via Streamable HTTP. Neither provider performs arithmetic or route metrics itself.
 
-#### Neural TTS and Browser Fallback
-When `GROQ_API_KEY` is configured, `POST /api/tts` uses Groq Orpheus (`GROQ_TTS_MODEL`, default `canopylabs/orpheus-v1-english`; `GROQ_TTS_VOICE`, default `hannah`). If the endpoint returns an error, the frontend falls back to the browser's `speechSynthesis` voices. Text interaction continues to work if neither is available.
+#### On-Device Neural Voice & Spoken Formatter
+RoutePilot defaults to **Kokoro-82M ONNX running on-device** via a dedicated Web Worker:
+- **Zero Cloud Leakage:** Spoken replies are synthesized locally via WebGPU (with WASM fallback). Text is never sent to third-party TTS APIs.
+- **Spoken Formatter (`speechFormatter.ts`):** Decouples chat UI presentation from spoken audio. Chat bubbles preserve rich Markdown, lists, and links; spoken output strips Markdown noise, expands navigation abbreviations (`km` -> `kilometers`), formats ISO timestamps into natural 12-hour AM/PM times, and articulates canonical route facts.
+- **Personas & Pacing:** Default voice is Bella (`af_bella`, warm copilot), with Heart (`af_heart`, neutral) and Michael (`am_michael`, calm male) selectable in the composer footer and persisted in `localStorage["routepilot.kokoro-voice"]`. Speech pacing is tuned to `speed: 0.95`.
+- **First Load & Fallback:** The quantized model (~92 MB) and voice tensors are downloaded once on first spoken reply and cached in the browser. If on-device inference fails or WebGPU/WASM is unavailable, the client seamlessly falls back to browser `speechSynthesis`. The legacy `/api/tts` endpoint remains for backward compatibility.
 
 #### Groq Context Compaction & Token Budgeting
 To operate smoothly within Groq rate and token-per-minute (TPM) limits:
@@ -203,8 +207,9 @@ Open `http://localhost:5173` in your browser.
 ```bash
 npm test
 ```
-Runs 119 automated tests covering:
+Runs 150 automated tests covering:
 - Agent multi-turn conversation loop and deterministic plan continuity
+- Spoken response formatting, abbreviation expansion, and timestamp conversions
 - Explicit constraint and stop removal
 - Failed-reroute stale-state propagation and recovery
 - Chat API handler and error sanitization
@@ -221,21 +226,29 @@ npm run build
 npm run lint
 ```
 
-### Playwright E2E Smoke Tests
+### Playwright E2E Test Suite
 
 ```bash
 cd frontend
-npx playwright install chromium
+# Default uses Playwright-managed Chromium:
 npx playwright test
+# Or use system Google Chrome if CDN downloads are restricted:
+$env:PLAYWRIGHT_CHANNEL="chrome"; npx playwright test
 ```
 
-The suite has 7 scenarios: initial state, route card/MapLibre rendering, the three-turn stop workflow, stale-route presentation, retry behavior, example prompts, and voice/accessibility controls.
+The E2E suite consists of **93 automated tests** across 6 specialized specs:
+- `smoke.spec.ts` (10 tests): Multi-turn stop workflow, MapLibre rendering, constraint updates, and retry behavior.
+- `voice.spec.ts` (15 tests): On-device Kokoro mode, browser speech fallback, mute/cancellation, and zero `/api/tts` calls.
+- `localVoice.spec.ts` (5 tests): Web Worker boundary isolation, lazy loading, abort handling, and optional live on-device inference (`KOKORO_LIVE=1`).
+- `plan-update.spec.ts` (7 tests): Plan update summary banner, dismissibility, and continuity diffs.
+- `phase2.spec.ts` (8 tests): Network resilience, provider rate limit recovery, stale-state preservation, and input deduplication.
+- `browser-matrix.spec.ts` (48 tests): Responsive multi-viewport verification across Desktop (1440x900), Tablet (1024x768), and Mobile (390x844).
 
 ### Release Verification Status
 
-- A scripted three-turn regression is part of `npm test` and verifies that the canonical `TravelPlan` retains the deadline, toll avoidance, highway avoidance, selected café, 15-minute dwell, stop waypoint, departure, ETA, and constraint evaluations after an incomplete third turn.
+- A scripted three-turn regression is part of `npm test` (150/150 passing) and verifies that the canonical `TravelPlan` retains the deadline, toll avoidance, highway avoidance, selected café, 15-minute dwell, stop waypoint, departure, ETA, and constraint evaluations after an incomplete third turn.
 - A bounded live Groq rehearsal completed in one session: all three turns returned HTTP 200 and the final canonical plan retained the next-day 7:00 AM IST deadline, toll and highway avoidance, the selected café with its 15-minute dwell, and matching departure/ETA/duration values.
-- The browser suite was run in system Chrome in this environment and all 7 scenarios passed. The Playwright-managed Chromium download was blocked by a CDN timeout, so `npx playwright install chromium` must succeed before the default Playwright project can run locally.
+- The complete Playwright suite (93 tests) was verified in system Chrome, and the live Kokoro-82M on-device neural voice test (`KOKORO_LIVE=1`) was executed directly on WebGPU, producing verified 24kHz WAV audio.
 - Bedrock has not been live-verified in this release pass; Groq is the verified demo provider.
 
 ---

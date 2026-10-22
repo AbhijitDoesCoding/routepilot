@@ -59,7 +59,7 @@
 - **Frontend Stack:** React 19, TypeScript, Vite, Tailwind CSS v4, MapLibre GL JS.
 - **Voice Capabilities:**
   - Voice Input: Browser Web Speech API (`SpeechRecognition`) with visual listening feedback.
-  - Voice Output: Groq Orpheus neural TTS through `POST /api/tts`, with browser `speechSynthesis` fallback when the endpoint is unavailable or unconfigured.
+  - Voice Output: On-device neural speech generation via `Kokoro-82M-v1.0-ONNX` (`q8`) running inside a dedicated Web Worker (WebGPU with WASM fallback). Normalizes speech through `speechFormatter.ts`, provides selectable copilot personas (`af_bella` default warm copilot, `af_heart`, `am_michael`), and falls back to browser `speechSynthesis` when on-device inference is unavailable. The legacy `POST /api/tts` endpoint remains for backward compatibility.
   - Graceful Fallback: Functions completely in text mode on browsers without speech support.
 - **Visual Presentation:**
   - Route line rendered dynamically via GeoJSON LineString.
@@ -72,9 +72,14 @@
 ## 6. Open Source Qualification
 
 - **License:** ISC License (see [LICENSE](../LICENSE))
-- **Qualifying Contribution:**
-  - *URL / Pull Request:* `[Insert link to qualifying open source contribution once submitted]`
-  - *Status:* Ready for submission
+- **Qualifying External Open-Source Contribution:**
+  - **Contribution URL:** [QubesOS/qubes-core-admin-client #513](https://github.com/QubesOS/qubes-core-admin-client/pull/513)
+  - **Project Repository:** [https://github.com/QubesOS/qubes-core-admin-client](https://github.com/QubesOS/qubes-core-admin-client)
+  - **GitHub Username:** `AbhijitDoesCoding`
+  - **Date Submitted:** October 14, 2026 (during the hackathon submission window)
+  - **Description:** Documentation correction and regression-test contribution for a NetVM dependency chain (`qvm-shutdown: fix --wait dependency-order docs and add NetVM chain regression test`). Corrects inaccurate docs on `--wait` dependency ordering and adds unit/regression tests for shutdown chains.
+  - **Upstream PR Clarification:** Valhalla routing fixes (`AbhijitDoesCoding/valhalla` branch `investigate/6386-area-route-skips-area`) were implemented on a personal fork and are not claimed as an upstream pull request.
+- **Status:** Verified and ready for Devpost entry.
 
 ---
 
@@ -82,13 +87,15 @@
 
 - [x] Zero raw secrets or personal AWS credentials committed to git
 - [x] Clean `.gitignore` excluding `.env`, `dist`, `node_modules`, `playwright-report`, and `test-results`
-- [x] 119 automated tests passing (`npm test`) with 0 failures
+- [x] 150 automated tests passing (`npm test`) with 0 failures
 - [x] Full TypeScript compilation passes with 0 errors (`npm run build` in root and `frontend/`)
-- [x] Frontend lint passes (`npm run lint`)
+- [x] Frontend lint passes (`npm --prefix frontend run lint`)
 - [x] Scripted three-turn continuity regression preserves deadline, toll/highway constraints, café stop, dwell, departure, ETA, and constraint evaluations
 - [x] Failed-reroute stale-state and recovery regression passes
 - [x] Bounded live Groq three-turn rehearsal passed: final plan retained the next-day deadline, toll/highway constraints, selected café, 15-minute dwell, and matching departure/ETA/duration
-- [x] 7 Playwright smoke scenarios passed in system Chrome; Playwright-managed Chromium download was blocked by a CDN timeout in this environment
+- [x] 93 Playwright E2E tests passing across 6 suites (`smoke`, `voice`, `localVoice`, `phase2`, `plan-update`, `browser-matrix`)
+- [x] Live on-device Kokoro-82M WebGPU inference verified via `KOKORO_LIVE=1`
 - [x] Safe server error responses on `/api/chat` without stack trace leakage
 - [x] CORS properly configured via `CORS_ORIGIN`
+- [x] Friction log documented in `docs/FRICTION_LOG.md`
 - [x] Documented demonstration script in `docs/DEMO_SCRIPT.md`
