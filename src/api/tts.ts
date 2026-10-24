@@ -56,8 +56,12 @@ export const createTtsHandler = () => {
       res.end(audio);
     } catch (err: any) {
       console.error("TTS failed:", err?.message || err);
+      const isTerms = err?.message?.includes("terms acceptance") || err?.error?.error?.code === "model_terms_required";
+      const errorMsg = isTerms
+        ? "Groq TTS requires one-time terms acceptance: https://console.groq.com/playground?model=canopylabs%2Forpheus-v1-english"
+        : (err?.message || "TTS unavailable");
       res.writeHead(502, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "TTS unavailable" }));
+      res.end(JSON.stringify({ error: errorMsg, isTermsRequired: isTerms }));
     }
   };
 };

@@ -148,38 +148,38 @@ body {
   color: var(--color-route-400);
 }
 
-.markdown-content table {
+.markdown-content .table-container,
+.table-container {
   width: 100%;
-  table-layout: fixed;
-  border-collapse: collapse;
+  max-width: 100%;
+  overflow-x: auto;
   margin-top: 0.65rem;
   margin-bottom: 0.65rem;
-  font-size: 0.8125rem;
-  line-height: 1.35rem;
   border: 1px solid var(--color-ink-600);
   border-radius: 0.5rem;
-  overflow: hidden;
+}
+
+.markdown-content table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+  line-height: 1.35rem;
 }
 .markdown-content th {
   border: 1px solid var(--color-ink-600);
   background-color: var(--color-ink-700);
-  padding: 0.4rem 0.6rem;
+  padding: 0.45rem 0.75rem;
   font-weight: 600;
   text-align: left;
   color: var(--color-paper-50);
-  white-space: normal;
+  white-space: nowrap;
 }
 .markdown-content td {
   border: 1px solid var(--color-ink-700);
-  padding: 0.4rem 0.6rem;
+  padding: 0.45rem 0.75rem;
   color: var(--color-ink-200);
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.markdown-content th:first-child,
-.markdown-content td:first-child {
-  width: 40%;
-  white-space: normal;
+  white-space: nowrap;
 }
 .markdown-content tr:nth-child(even) td {
   background-color: rgba(16, 29, 41, 0.6);

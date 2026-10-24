@@ -233,27 +233,35 @@ function App() {
       ? "Voice replies muted"
       : speechError
         ? speechError
-        : voicePhase === "preparing"
-          ? typeof prepareProgress?.progress === "number"
-            ? `Preparing on-device voice… ${Math.round(prepareProgress.progress)}%`
-            : "Preparing on-device voice…"
-          : voicePhase === "generating"
-            ? "Generating on-device speech…"
+        : voiceMode === "groq"
+          ? voicePhase === "generating"
+            ? "Synthesizing with Groq TTS…"
             : voicePhase === "speaking"
-              ? activeEngine === "local"
-                ? "Speaking on-device…"
-                : "Speaking with browser voice…"
+              ? "Speaking with Groq TTS…"
               : voicePhase === "stopped"
                 ? "Speech stopped"
-                : voiceMode === "browser"
-                  ? "Browser voice selected"
-                  : localStatus === "unavailable"
-                    ? "On-device voice unavailable · browser fallback"
-                    : localStatus === "ready"
-                      ? localError
-                        ? "On-device voice error · browser fallback"
-                        : "On-device voice ready"
-                      : "On-device voice (loads on first reply)";
+                : "Groq TTS (Orpheus) active"
+          : voicePhase === "preparing"
+            ? typeof prepareProgress?.progress === "number"
+              ? `Preparing on-device voice… ${Math.round(prepareProgress.progress)}%`
+              : "Preparing on-device voice…"
+            : voicePhase === "generating"
+              ? "Generating on-device speech…"
+              : voicePhase === "speaking"
+                ? activeEngine === "local"
+                  ? "Speaking on-device…"
+                  : "Speaking with browser voice…"
+                : voicePhase === "stopped"
+                  ? "Speech stopped"
+                  : voiceMode === "browser"
+                    ? "Browser voice selected"
+                    : localStatus === "unavailable"
+                      ? "On-device voice unavailable · browser fallback"
+                      : localStatus === "ready"
+                        ? localError
+                          ? "On-device voice error · browser fallback"
+                          : "On-device voice ready"
+                        : "On-device voice (loads on first reply)";
 
   const statusLabel = hasError
     ? "Needs attention"
@@ -485,7 +493,7 @@ function App() {
                         </span>
                         <div
                           className={clsx(
-                            "max-w-[92%] rounded-2xl px-3.5 py-2.5 text-[14px] leading-relaxed",
+                            "min-w-0 max-w-[95%] overflow-hidden rounded-2xl px-3.5 py-2.5 text-[14px] leading-relaxed",
                             message.role === "user"
                               ? "rounded-br-md bg-route-700 text-white"
                               : "rounded-bl-md border border-ink-600/70 bg-ink-800 text-paper-100"
@@ -667,13 +675,14 @@ function App() {
                     {voiceEnabled && speechOutputSupported && (
                       <select
                         aria-label="Voice engine"
-                        title="Local Kokoro runs fully on this device. Browser voice uses the browser speech engine."
+                        title="Choose Groq TTS (cloud neural), Local Kokoro (on-device), or Browser voice."
                         value={voiceMode}
                         onChange={(event) =>
                           setVoiceMode(event.target.value as VoiceMode)
                         }
                         className="rounded-md border border-ink-600 bg-ink-850 px-1.5 py-1 text-[10px] font-medium text-ink-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-route-400"
                       >
+                        <option value="groq">Groq TTS (Cloud)</option>
                         <option value="local">On-device</option>
                         <option value="browser">Browser</option>
                       </select>

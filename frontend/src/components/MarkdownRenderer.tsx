@@ -16,11 +16,14 @@ marked.setOptions({
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className = '' }) => {
   const html = useMemo(() => {
     try {
-      const parsed = marked.parse(content || '') as string;
+      let parsed = marked.parse(content || '') as string;
       if (typeof window !== 'undefined' && DOMPurify && typeof DOMPurify.sanitize === 'function') {
-        return DOMPurify.sanitize(parsed);
+        parsed = DOMPurify.sanitize(parsed);
       }
-      return parsed;
+      return parsed.replace(
+        /<table(\s|>)/g,
+        '<div class="table-container scroll-slim overflow-x-auto my-2.5 rounded-lg border border-ink-600/80"><table$1'
+      ).replace(/<\/table>/g, '</table></div>');
     } catch (err) {
       console.error('Failed to parse markdown:', err);
       return content;
@@ -29,7 +32,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
 
   return (
     <div
-      className={`markdown-content overflow-x-auto text-sm leading-relaxed ${className}`}
+      className={`markdown-content min-w-0 text-sm leading-relaxed ${className}`}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

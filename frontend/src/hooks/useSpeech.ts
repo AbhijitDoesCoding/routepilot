@@ -126,15 +126,15 @@ const speakWithBrowser = (text: string, isStale: () => boolean, onEnd: () => voi
   return true;
 };
 
-export type VoiceMode = "local" | "browser";
+export type VoiceMode = "groq" | "local" | "browser";
 
 /**
  * - idle/ready: nothing is being synthesized
  * - preparing: local model is downloading/initializing
- * - generating: Kokoro is synthesizing audio
- * - speaking: audio is playing (local or browser)
+ * - generating: TTS model is synthesizing audio
+ * - speaking: audio is playing (groq, local or browser)
  * - stopped: the user muted or superseded speech
- * - unavailable: neither local nor browser speech can play
+ * - unavailable: neither cloud, local nor browser speech can play
  */
 export type VoicePhase =
   | "idle"
@@ -145,7 +145,7 @@ export type VoicePhase =
   | "stopped"
   | "unavailable";
 
-export type ActiveVoiceEngine = "local" | "browser" | null;
+export type ActiveVoiceEngine = "groq" | "local" | "browser" | null;
 
 const VOICE_MODE_KEY = "routepilot.voice-mode";
 const KOKORO_VOICE_KEY = "routepilot.kokoro-voice";
@@ -161,9 +161,13 @@ const readKokoroVoice = (): string => {
 
 const readVoiceMode = (): VoiceMode => {
   try {
-    return window.localStorage.getItem(VOICE_MODE_KEY) === "browser" ? "browser" : "local";
+    const val = window.localStorage.getItem(VOICE_MODE_KEY);
+    if (val === "browser") return "browser";
+    if (val === "local") return "local";
+    if (val === "groq") return "groq";
+    return "groq";
   } catch {
-    return "local";
+    return "groq";
   }
 };
 
@@ -277,7 +281,7 @@ export const useSpeechOutput = () => {
   );
 
   const playLocalBlob = useCallback(
-    async (blob: Blob, text: string, isStale: () => boolean) => {
+    async (blob: Blob, text: string, isStale: () => boolean, engine: "local" | "groq" = "local") => {
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audioRef.current = audio;
@@ -290,7 +294,7 @@ export const useSpeechOutput = () => {
         setPhase("ready");
       };
 
-      setActiveEngine("local");
+      setActiveEngine(engine);
       setPhase("speaking");
       setIsSpeaking(true);
       try {
@@ -300,8 +304,8 @@ export const useSpeechOutput = () => {
         if (audioRef.current === audio) audioRef.current = null;
         if (isStale()) return;
         setIsSpeaking(false);
-        const message = sanitizeMessage(error) || "Browser blocked local audio playback.";
-        setLocalError(message);
+        const message = sanitizeMessage(error) || "Browser blocked audio playback.";
+        setSpeechError(message);
         speakBrowserFallback(text, isStale);
       }
     },
@@ -319,6 +323,40 @@ export const useSpeechOutput = () => {
       if (voiceMode === "browser") {
         speakBrowserFallback(text, isStale);
         return;
+      }
+
+      if (voiceMode === "groq") {
+        setPhase("generating");
+        setActiveEngine("groq");
+        try {
+          const controller = new AbortController();
+          abortRef.current = controller;
+          const res = await fetch("/api/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text }),
+            signal: controller.signal,
+          });
+          if (isStale()) return;
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || "Groq TTS request failed");
+          }
+          const blob = await res.blob();
+          if (isStale()) return;
+          abortRef.current = null;
+          await playLocalBlob(blob, text, isStale, "groq");
+          return;
+        } catch (error) {
+          if (isStale()) return;
+          const aborted =
+            error instanceof DOMException && error.name === "AbortError";
+          if (aborted) return;
+          const message = sanitizeMessage(error) || "Groq TTS unavailable.";
+          setSpeechError(message);
+          speakBrowserFallback(text, isStale);
+          return;
+        }
       }
 
       // A previously failed local load falls back visibly rather than retrying
@@ -370,7 +408,7 @@ export const useSpeechOutput = () => {
         if (isStale()) return;
         abortRef.current = null;
         setLocalStatus("ready");
-        await playLocalBlob(blob, text, isStale);
+        await playLocalBlob(blob, text, isStale, "local");
       } catch (error) {
         if (isStale()) return;
         const aborted =
